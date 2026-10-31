@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls -la ~/Desktop ~/Downloads 2>/dev/null)",
+      "Bash(npm -v)",
+      "Bash(git --version)",
+      "Bash(echo \"exit:$?\")",
+      "Bash(npx create-next-app@latest --help)",
+      "Bash(npx create-next-app@latest . --ts --tailwind --eslint --app --src-dir --import-alias \"@/*\" --use-npm --no-agent-feedback --yes)",
+      "Bash(mkdir -p /tmp/claude-501/course-app-stash)",
+      "Bash(mv CLAUDE.md PLAN.md /tmp/claude-501/course-app-stash/)"
+    ]
+  }
+}
