@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { Reorder, useDragControls } from "framer-motion";
 import { places, type Place, type PlaceCategory } from "@/data/places";
 import {
   REGION_CENTER,
@@ -157,17 +158,6 @@ export default function Home() {
     setStages((prev) => prev.filter((s) => s.id !== id));
   }
 
-  function moveStage(id: string, direction: -1 | 1) {
-    setStages((prev) => {
-      const index = prev.findIndex((s) => s.id === id);
-      const target = index + direction;
-      if (index === -1 || target < 0 || target >= prev.length) return prev;
-      const next = [...prev];
-      [next[index], next[target]] = [next[target], next[index]];
-      return next;
-    });
-  }
-
   function makeCourse() {
     setOverrides({});
     setShowResult(true);
@@ -198,7 +188,7 @@ export default function Home() {
           onSetMaxTravelMinutes={setMaxTravelMinutes}
           onOpenAddSheet={() => setAddSheetOpen(true)}
           onRemoveStage={removeStage}
-          onMoveStage={moveStage}
+          onReorderStages={setStages}
           onRequestChangeDesignated={(stageId) => setDesignatedEditTarget(stageId)}
           onMakeCourse={makeCourse}
         />
@@ -231,7 +221,7 @@ function InputView({
   onSetMaxTravelMinutes,
   onOpenAddSheet,
   onRemoveStage,
-  onMoveStage,
+  onReorderStages,
   onRequestChangeDesignated,
   onMakeCourse,
 }: {
@@ -240,7 +230,7 @@ function InputView({
   onSetMaxTravelMinutes: (minutes: number) => void;
   onOpenAddSheet: () => void;
   onRemoveStage: (id: string) => void;
-  onMoveStage: (id: string, direction: -1 | 1) => void;
+  onReorderStages: (stages: Stage[]) => void;
   onRequestChangeDesignated: (stageId: string) => void;
   onMakeCourse: () => void;
 }) {
@@ -264,76 +254,23 @@ function InputView({
           </p>
         )}
 
-        <ul className="flex flex-col gap-3">
+        <Reorder.Group
+          axis="y"
+          values={stages}
+          onReorder={onReorderStages}
+          className="flex flex-col gap-3"
+        >
           {stages.map((stage, index) => (
-            <li
+            <StageRow
               key={stage.id}
-              className="flex flex-col gap-2 rounded-xl border border-zinc-300 p-3 dark:border-zinc-700"
-            >
-              <div className="flex items-center gap-2">
-                <div className="flex-1">
-                  {stage.kind === "recommend" ? (
-                    <span className="text-base font-medium text-black dark:text-white">
-                      {stage.category}
-                      {stage.subCategory ? ` · ${stage.subCategory}` : ""}
-                    </span>
-                  ) : (
-                    <div className="flex items-center gap-2">
-                      <span className="w-fit rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
-                        지정 · {positionLabel(index, stages.length)}
-                      </span>
-                      <span className="text-base font-medium text-black dark:text-white">
-                        {stage.place.name}
-                      </span>
-                    </div>
-                  )}
-                </div>
-
-                <button
-                  type="button"
-                  aria-label="위로 이동"
-                  onClick={() => onMoveStage(stage.id, -1)}
-                  disabled={index === 0}
-                  className="flex h-11 w-11 items-center justify-center rounded-lg border border-zinc-300 text-lg disabled:opacity-30 dark:border-zinc-700 dark:text-white"
-                >
-                  ▲
-                </button>
-                <button
-                  type="button"
-                  aria-label="아래로 이동"
-                  onClick={() => onMoveStage(stage.id, 1)}
-                  disabled={index === stages.length - 1}
-                  className="flex h-11 w-11 items-center justify-center rounded-lg border border-zinc-300 text-lg disabled:opacity-30 dark:border-zinc-700 dark:text-white"
-                >
-                  ▼
-                </button>
-                <button
-                  type="button"
-                  aria-label="단계 삭제"
-                  onClick={() => onRemoveStage(stage.id)}
-                  className="flex h-11 w-11 items-center justify-center rounded-lg border border-zinc-300 text-lg text-red-500 dark:border-zinc-700"
-                >
-                  ✕
-                </button>
-              </div>
-
-              {stage.kind === "designated" && (
-                <>
-                  <span className="text-sm text-zinc-500 dark:text-zinc-400">
-                    {stage.place.address}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => onRequestChangeDesignated(stage.id)}
-                    className="h-9 w-fit rounded-lg border border-zinc-300 px-3 text-sm font-medium text-zinc-600 dark:border-zinc-700 dark:text-zinc-300"
-                  >
-                    변경
-                  </button>
-                </>
-              )}
-            </li>
+              stage={stage}
+              index={index}
+              total={stages.length}
+              onRemove={onRemoveStage}
+              onRequestChangeDesignated={onRequestChangeDesignated}
+            />
           ))}
-        </ul>
+        </Reorder.Group>
 
         {stages.length < MAX_STAGES ? (
           <button
@@ -382,6 +319,83 @@ function InputView({
         코스 만들기
       </button>
     </div>
+  );
+}
+
+function StageRow({
+  stage,
+  index,
+  total,
+  onRemove,
+  onRequestChangeDesignated,
+}: {
+  stage: Stage;
+  index: number;
+  total: number;
+  onRemove: (id: string) => void;
+  onRequestChangeDesignated: (stageId: string) => void;
+}) {
+  const dragControls = useDragControls();
+
+  return (
+    <Reorder.Item
+      value={stage}
+      dragListener={false}
+      dragControls={dragControls}
+      className="flex flex-col gap-2 rounded-xl border border-zinc-300 bg-white p-3 dark:border-zinc-700 dark:bg-black"
+    >
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          aria-label="눌러서 순서 변경"
+          onPointerDown={(e) => dragControls.start(e)}
+          style={{ touchAction: "none" }}
+          className="flex h-11 w-9 shrink-0 cursor-grab items-center justify-center text-xl text-zinc-400 active:cursor-grabbing dark:text-zinc-500"
+        >
+          ⠿
+        </button>
+
+        <div className="flex-1">
+          {stage.kind === "recommend" ? (
+            <span className="text-base font-medium text-black dark:text-white">
+              {stage.category}
+              {stage.subCategory ? ` · ${stage.subCategory}` : ""}
+            </span>
+          ) : (
+            <div className="flex items-center gap-2">
+              <span className="w-fit rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+                지정 · {positionLabel(index, total)}
+              </span>
+              <span className="text-base font-medium text-black dark:text-white">
+                {stage.place.name}
+              </span>
+            </div>
+          )}
+        </div>
+
+        <button
+          type="button"
+          aria-label="단계 삭제"
+          onClick={() => onRemove(stage.id)}
+          className="flex h-11 w-11 items-center justify-center rounded-lg border border-zinc-300 text-lg text-red-500 dark:border-zinc-700"
+        >
+          ✕
+        </button>
+      </div>
+
+      {stage.kind === "designated" && (
+        <>
+          <span className="text-sm text-zinc-500 dark:text-zinc-400">{stage.place.address}</span>
+          <button
+            type="button"
+            onClick={() => onRequestChangeDesignated(stage.id)}
+            className="h-9 w-fit rounded-lg border border-zinc-300 px-3 text-sm font-medium text-zinc-600 dark:border-zinc-700 dark:text-zinc-300"
+          >
+            변경
+          </button>
+        </>
+      )}
+    </Reorder.Item>
   );
 }
 
