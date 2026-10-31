@@ -10,7 +10,10 @@
       "Bash(mkdir -p /tmp/claude-501/course-app-stash)",
       "Bash(mv CLAUDE.md PLAN.md /tmp/claude-501/course-app-stash/)",
       "Bash(mv /tmp/claude-501/course-app-stash/CLAUDE.md /tmp/claude-501/course-app-stash/PLAN.md . && ls -la)",
-      "Bash(git add *)"
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(npx tsc *)",
+      "Bash(node -e ' *)"
     ]
   }
 }
