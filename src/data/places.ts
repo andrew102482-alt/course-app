@@ -21,6 +21,11 @@ export type Place = {
   rating: number;
   reviewCount: number;
   description: string;
+  /** 운영 시작·종료 시각("HH:MM", 24시간제). 예시 데이터라 요일과 관계없이 같다. */
+  openTime: string;
+  closeTime: string;
+  /** 정기 휴무 요일. 0=일 1=월 2=화 3=수 4=목 5=금 6=토. 비어 있으면 휴무일 없음. */
+  closedDays: number[];
 };
 
 export const places: Place[] = [
@@ -35,6 +40,9 @@ export const places: Place[] = [
     rating: 4.6,
     reviewCount: 842,
     description: "현대미술 상설전과 기획전을 함께 볼 수 있는 미술관",
+    openTime: "10:00",
+    closeTime: "18:00",
+    closedDays: [1],
   },
   {
     id: "ex02",
@@ -46,6 +54,9 @@ export const places: Place[] = [
     rating: 4.3,
     reviewCount: 213,
     description: "인사동 골목 안 작은 갤러리, 신진 작가 전시 중심",
+    openTime: "10:00",
+    closeTime: "19:00",
+    closedDays: [1],
   },
   {
     id: "ex03",
@@ -57,6 +68,9 @@ export const places: Place[] = [
     rating: 4.7,
     reviewCount: 1204,
     description: "한옥을 개조한 공간에서 즐기는 전통과 현대의 조화",
+    openTime: "11:00",
+    closeTime: "19:00",
+    closedDays: [0, 1],
   },
   {
     id: "ex04",
@@ -68,6 +82,9 @@ export const places: Place[] = [
     rating: 4.1,
     reviewCount: 97,
     description: "필름 사진 작품을 모은 아늑한 소규모 전시 공간",
+    openTime: "10:00",
+    closeTime: "18:00",
+    closedDays: [1],
   },
   {
     id: "ex05",
@@ -79,6 +96,9 @@ export const places: Place[] = [
     rating: 4.4,
     reviewCount: 356,
     description: "도예·공예 작가들의 작품을 직접 보고 구매할 수 있는 곳",
+    openTime: "09:30",
+    closeTime: "17:30",
+    closedDays: [1],
   },
   {
     id: "ex06",
@@ -90,6 +110,9 @@ export const places: Place[] = [
     rating: 4.8,
     reviewCount: 1890,
     description: "조선시대부터 근현대까지 서울의 역사를 보여주는 상설 전시",
+    openTime: "11:00",
+    closeTime: "20:00",
+    closedDays: [2],
   },
   {
     id: "ex07",
@@ -101,6 +124,9 @@ export const places: Place[] = [
     rating: 3.9,
     reviewCount: 64,
     description: "독립 작가들의 실험적인 작품을 주로 소개하는 복합문화공간",
+    openTime: "10:00",
+    closeTime: "18:00",
+    closedDays: [],
   },
   {
     id: "ex08",
@@ -112,6 +138,9 @@ export const places: Place[] = [
     rating: 4.5,
     reviewCount: 678,
     description: "자수·한지 공예 등 전통 공예품을 테마로 한 상설 전시",
+    openTime: "10:00",
+    closeTime: "18:00",
+    closedDays: [1],
   },
   {
     id: "ex09",
@@ -123,6 +152,9 @@ export const places: Place[] = [
     rating: 4.2,
     reviewCount: 432,
     description: "국내외 현대미술 작가들의 교류 전시가 자주 열리는 미술관",
+    openTime: "12:00",
+    closeTime: "20:00",
+    closedDays: [0],
   },
   {
     id: "ex10",
@@ -134,6 +166,9 @@ export const places: Place[] = [
     rating: 3.8,
     reviewCount: 48,
     description: "일러스트레이터들의 원화를 전시하는 아기자기한 공간",
+    openTime: "10:00",
+    closeTime: "17:00",
+    closedDays: [1, 2],
   },
 
   // 맛집 20곳 — 한식 5
@@ -148,6 +183,9 @@ export const places: Place[] = [
     rating: 4.6,
     reviewCount: 1523,
     description: "제철 재료로 차려내는 정갈한 한정식",
+    openTime: "11:00",
+    closeTime: "21:00",
+    closedDays: [],
   },
   {
     id: "food02",
@@ -160,6 +198,9 @@ export const places: Place[] = [
     rating: 4.2,
     reviewCount: 876,
     description: "진한 국물이 일품인 24시간 국밥집",
+    openTime: "11:30",
+    closeTime: "22:00",
+    closedDays: [0],
   },
   {
     id: "food03",
@@ -172,6 +213,9 @@ export const places: Place[] = [
     rating: 4.0,
     reviewCount: 234,
     description: "구수한 된장찌개와 김치찌개를 파는 작은 식당",
+    openTime: "12:00",
+    closeTime: "22:00",
+    closedDays: [1],
   },
   {
     id: "food04",
@@ -184,6 +228,9 @@ export const places: Place[] = [
     rating: 4.4,
     reviewCount: 1987,
     description: "오래된 단골이 많은 설렁탕 노포",
+    openTime: "11:00",
+    closeTime: "21:30",
+    closedDays: [],
   },
   {
     id: "food05",
@@ -196,6 +243,9 @@ export const places: Place[] = [
     rating: 3.7,
     reviewCount: 112,
     description: "숯불에 구운 떡갈비가 메인인 가정식 식당",
+    openTime: "11:30",
+    closeTime: "21:00",
+    closedDays: [2],
   },
 
   // 맛집 20곳 — 일식 5
@@ -210,6 +260,9 @@ export const places: Place[] = [
     rating: 4.7,
     reviewCount: 945,
     description: "오마카세로 즐기는 당일 공수 생선 초밥",
+    openTime: "17:00",
+    closeTime: "23:00",
+    closedDays: [0],
   },
   {
     id: "food07",
@@ -222,6 +275,9 @@ export const places: Place[] = [
     rating: 4.1,
     reviewCount: 356,
     description: "진한 돈코츠 육수의 라멘 전문점",
+    openTime: "11:00",
+    closeTime: "20:30",
+    closedDays: [1],
   },
   {
     id: "food08",
@@ -234,6 +290,9 @@ export const places: Place[] = [
     rating: 4.3,
     reviewCount: 523,
     description: "퇴근 후 한잔하기 좋은 조용한 이자카야",
+    openTime: "11:00",
+    closeTime: "22:00",
+    closedDays: [],
   },
   {
     id: "food09",
@@ -246,6 +305,9 @@ export const places: Place[] = [
     rating: 3.9,
     reviewCount: 189,
     description: "두툼한 등심 돈카츠가 유명한 작은 식당",
+    openTime: "11:30",
+    closeTime: "21:30",
+    closedDays: [],
   },
   {
     id: "food10",
@@ -258,6 +320,9 @@ export const places: Place[] = [
     rating: 3.6,
     reviewCount: 76,
     description: "쫄깃한 수제 면발의 우동 전문점",
+    openTime: "12:00",
+    closeTime: "21:00",
+    closedDays: [0],
   },
 
   // 맛집 20곳 — 양식 5
@@ -272,6 +337,9 @@ export const places: Place[] = [
     rating: 4.5,
     reviewCount: 612,
     description: "매일 뽑는 생면으로 만드는 파스타 맛집",
+    openTime: "11:00",
+    closeTime: "21:00",
+    closedDays: [1],
   },
   {
     id: "food12",
@@ -284,6 +352,9 @@ export const places: Place[] = [
     rating: 4.8,
     reviewCount: 1342,
     description: "숙성육 스테이크를 전문으로 하는 레스토랑",
+    openTime: "10:30",
+    closeTime: "20:30",
+    closedDays: [],
   },
   {
     id: "food13",
@@ -296,6 +367,9 @@ export const places: Place[] = [
     rating: 4.0,
     reviewCount: 267,
     description: "브런치와 파스타를 함께 즐길 수 있는 비스트로",
+    openTime: "11:30",
+    closeTime: "22:30",
+    closedDays: [2],
   },
   {
     id: "food14",
@@ -308,6 +382,9 @@ export const places: Place[] = [
     rating: 3.8,
     reviewCount: 143,
     description: "화덕에서 구운 나폴리식 피자 전문점",
+    openTime: "11:00",
+    closeTime: "21:00",
+    closedDays: [],
   },
   {
     id: "food15",
@@ -320,6 +397,9 @@ export const places: Place[] = [
     rating: 4.2,
     reviewCount: 489,
     description: "수제버거와 그릴 요리를 파는 캐주얼 레스토랑",
+    openTime: "12:00",
+    closeTime: "22:00",
+    closedDays: [0],
   },
 
   // 맛집 20곳 — 중식 5
@@ -334,6 +414,9 @@ export const places: Place[] = [
     rating: 3.9,
     reviewCount: 398,
     description: "불맛 가득한 간짜장이 인기인 중국집",
+    openTime: "11:00",
+    closeTime: "21:30",
+    closedDays: [1],
   },
   {
     id: "food17",
@@ -346,6 +429,9 @@ export const places: Place[] = [
     rating: 4.3,
     reviewCount: 721,
     description: "직접 재료를 골라 먹는 마라탕 전문점",
+    openTime: "11:30",
+    closeTime: "21:00",
+    closedDays: [],
   },
   {
     id: "food18",
@@ -358,6 +444,9 @@ export const places: Place[] = [
     rating: 4.6,
     reviewCount: 834,
     description: "홍콩식 딤섬을 손으로 빚어내는 맛집",
+    openTime: "11:00",
+    closeTime: "22:00",
+    closedDays: [],
   },
   {
     id: "food19",
@@ -370,6 +459,9 @@ export const places: Place[] = [
     rating: 4.0,
     reviewCount: 256,
     description: "바삭한 탕수육과 짜장면 세트가 유명한 곳",
+    openTime: "17:30",
+    closeTime: "23:00",
+    closedDays: [1],
   },
   {
     id: "food20",
@@ -382,6 +474,9 @@ export const places: Place[] = [
     rating: 3.7,
     reviewCount: 92,
     description: "40년 전통의 동네 중국음식점",
+    openTime: "11:00",
+    closeTime: "20:00",
+    closedDays: [0],
   },
 
   // 카페 12곳 — 디저트 4
@@ -396,6 +491,9 @@ export const places: Place[] = [
     rating: 4.4,
     reviewCount: 1034,
     description: "제철 과일을 올린 수제 빙수 전문 카페",
+    openTime: "09:00",
+    closeTime: "21:00",
+    closedDays: [],
   },
   {
     id: "cafe02",
@@ -408,6 +506,9 @@ export const places: Place[] = [
     rating: 4.1,
     reviewCount: 287,
     description: "매일 굽는 마카롱과 핸드드립 커피",
+    openTime: "10:00",
+    closeTime: "22:00",
+    closedDays: [1],
   },
   {
     id: "cafe03",
@@ -420,6 +521,9 @@ export const places: Place[] = [
     rating: 4.5,
     reviewCount: 612,
     description: "오미자차·수정과 등 전통차를 파는 한옥 찻집",
+    openTime: "11:00",
+    closeTime: "20:00",
+    closedDays: [2],
   },
   {
     id: "cafe04",
@@ -432,6 +536,9 @@ export const places: Place[] = [
     rating: 3.9,
     reviewCount: 178,
     description: "케이크와 타르트를 직접 만드는 작은 디저트 바",
+    openTime: "09:30",
+    closeTime: "21:30",
+    closedDays: [],
   },
 
   // 카페 12곳 — 브런치 4
@@ -446,6 +553,9 @@ export const places: Place[] = [
     rating: 4.2,
     reviewCount: 523,
     description: "에그벤디딕과 샐러드가 맛있는 브런치 카페",
+    openTime: "10:00",
+    closeTime: "21:00",
+    closedDays: [1],
   },
   {
     id: "cafe06",
@@ -458,6 +568,9 @@ export const places: Place[] = [
     rating: 4.0,
     reviewCount: 345,
     description: "폭신한 수플레 팬케이크가 유명한 카페",
+    openTime: "10:30",
+    closeTime: "22:00",
+    closedDays: [],
   },
   {
     id: "cafe07",
@@ -470,6 +583,9 @@ export const places: Place[] = [
     rating: 4.3,
     reviewCount: 467,
     description: "작은 정원이 있는 여유로운 브런치 공간",
+    openTime: "09:00",
+    closeTime: "20:00",
+    closedDays: [0],
   },
   {
     id: "cafe08",
@@ -482,6 +598,9 @@ export const places: Place[] = [
     rating: 3.8,
     reviewCount: 134,
     description: "출근길에 들르기 좋은 간단한 모닝 세트 카페",
+    openTime: "11:00",
+    closeTime: "21:00",
+    closedDays: [1],
   },
 
   // 카페 12곳 — 뷰 4
@@ -496,6 +615,9 @@ export const places: Place[] = [
     rating: 4.7,
     reviewCount: 1456,
     description: "한옥마을과 도심이 한눈에 보이는 전망 카페",
+    openTime: "10:00",
+    closeTime: "22:30",
+    closedDays: [],
   },
   {
     id: "cafe10",
@@ -508,6 +630,9 @@ export const places: Place[] = [
     rating: 4.6,
     reviewCount: 1023,
     description: "루프탑에서 즐기는 서울 야경 명소",
+    openTime: "09:00",
+    closeTime: "19:00",
+    closedDays: [2],
   },
   {
     id: "cafe11",
@@ -520,6 +645,9 @@ export const places: Place[] = [
     rating: 4.8,
     reviewCount: 1890,
     description: "경복궁과 북악산이 보이는 창가 자리가 인기인 카페",
+    openTime: "10:00",
+    closeTime: "21:00",
+    closedDays: [],
   },
   {
     id: "cafe12",
@@ -532,5 +660,8 @@ export const places: Place[] = [
     rating: 3.9,
     reviewCount: 201,
     description: "높은 층에서 종로 거리를 내려다볼 수 있는 카페",
+    openTime: "12:00",
+    closeTime: "22:00",
+    closedDays: [],
   },
 ];

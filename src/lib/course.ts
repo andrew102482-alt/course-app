@@ -39,6 +39,8 @@ export type RecommendStageResult = {
   candidates: ScoredCandidate[];
   /** 후보는 있었지만(이전 장소 기준) 다음 지정 장소와의 거리 때문에 전부 제외된 경우. */
   blockedByDesignated: boolean;
+  /** 일정 날짜가 정기 휴무 요일이라 후보에서 자동으로 빠진 장소 수. */
+  closedExcludedCount: number;
 };
 
 export type DesignatedStageResult = {
@@ -119,6 +121,20 @@ function proximityBonus(
   return Math.max(closeness, 0) * PROXIMITY_BONUS_WEIGHT;
 }
 
+/** "YYYY-MM-DD" 날짜의 요일(0=일 … 6=토). 형식이 틀리면 null. */
+export function weekdayOf(date: string): number | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
+  if (!m) return null;
+  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])).getDay();
+}
+
+/** 일정 날짜가 이 장소의 정기 휴무 요일이면 true. 날짜가 없거나 형식이 틀리면 false. */
+export function isClosedOn(place: Place, date: string | undefined): boolean {
+  if (!date) return false;
+  const weekday = weekdayOf(date);
+  return weekday !== null && place.closedDays.includes(weekday);
+}
+
 function matchesStage(place: Place, stage: RecommendStage): boolean {
   if (place.category !== stage.category) return false;
   if (!stage.subCategory) return true;
@@ -164,12 +180,14 @@ function scoreCandidate(
  *   경고 정보만 표시한다.
  * - `overrides`로 특정 추천 단계에 사용자가 고른 장소를 강제로 선택할 수 있다.
  * - 이미 선택된(추천) 장소는 다음 추천 단계 후보에서 제외한다.
+ * - `planDate`(일정 날짜)가 정기 휴무 요일인 장소는 후보에서 자동으로 제외한다.
  */
 export function buildCourse(
   stages: Stage[],
   places: Place[],
   maxTravelMinutes: number,
   overrides: StageOverrides = {},
+  planDate?: string,
 ): CourseResult {
   const usedPlaceIds = new Set<string>();
   let previous: LatLng | null = null;
@@ -204,9 +222,11 @@ export function buildCourse(
     const nextDesignated =
       nextStage?.kind === "designated" ? nextStage.place : null;
 
-    const pool = places.filter(
+    const matching = places.filter(
       (place) => matchesStage(place, stage) && !usedPlaceIds.has(place.id),
     );
+    const pool = matching.filter((place) => !isClosedOn(place, planDate));
+    const closedExcludedCount = matching.length - pool.length;
 
     const candidates = pool
       .map((place) => scoreCandidate(place, previous, nextDesignated, maxTravelMinutes))
@@ -236,6 +256,7 @@ export function buildCourse(
       travelMinutesFromPrevious: chosen?.travelMinutesFromPrevious ?? null,
       candidates,
       blockedByDesignated,
+      closedExcludedCount,
     });
 
     if (selected) {

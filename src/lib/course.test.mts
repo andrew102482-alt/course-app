@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   buildCourse,
+  isClosedOn,
   isWithinRegionRange,
   straightLineDistanceMeters,
   walkingMinutesBetween,
@@ -21,6 +22,9 @@ function place(overrides: Partial<Place> & Pick<Place, "id">): Place {
     rating: 4.0,
     reviewCount: 100,
     description: "",
+    openTime: "10:00",
+    closeTime: "21:00",
+    closedDays: [],
     ...overrides,
   };
 }
@@ -236,4 +240,50 @@ test("isWithinRegionRange: 종로 예시 데이터는 모두 1차 추천 범위 
     assert.equal(isWithinRegionRange(p), true, `${p.name}이 범위 밖으로 판정됨`);
   }
   assert.equal(isWithinRegionRange({ lat: 37.5, lng: 127.1 }), false);
+});
+
+// 2026-11-02는 월요일, 2026-11-03은 화요일이다.
+test("일정 날짜가 휴무 요일인 장소는 추천 후보에서 자동 제외된다", () => {
+  const closedMonday = place({ id: "closed", rating: 4.9, closedDays: [1] });
+  const open = place({ id: "open", rating: 4.0 });
+  const stages: Stage[] = [recommend("s1", "맛집")];
+
+  const monday = buildCourse(stages, [closedMonday, open], 15, {}, "2026-11-02");
+  const s1 = monday.stages[0];
+  assert.ok(s1.kind === "recommend");
+  assert.equal(s1.selected?.id, "open");
+  assert.deepEqual(s1.candidates.map((c) => c.place.id), ["open"]);
+  assert.equal(s1.closedExcludedCount, 1);
+
+  const tuesday = buildCourse(stages, [closedMonday, open], 15, {}, "2026-11-03");
+  const t1 = tuesday.stages[0];
+  assert.ok(t1.kind === "recommend");
+  assert.equal(t1.selected?.id, "closed");
+  assert.equal(t1.closedExcludedCount, 0);
+});
+
+test("일정 날짜가 없으면 휴무 요일을 따지지 않는다", () => {
+  const closedMonday = place({ id: "closed", rating: 4.9, closedDays: [1] });
+  const result = buildCourse([recommend("s1", "맛집")], [closedMonday], 15);
+  assert.equal(result.success, true);
+  assert.equal(isClosedOn(closedMonday, undefined), false);
+  assert.equal(isClosedOn(closedMonday, "형식오류"), false);
+});
+
+test("휴무라서 후보가 모두 빠지면 결과 없음이 되고 제외된 수가 남는다", () => {
+  const closedMonday = place({ id: "closed", closedDays: [1] });
+  const result = buildCourse([recommend("s1", "맛집")], [closedMonday], 15, {}, "2026-11-02");
+  assert.equal(result.success, false);
+  const s1 = result.stages[0];
+  assert.ok(s1.kind === "recommend");
+  assert.equal(s1.closedExcludedCount, 1);
+});
+
+test("예시 데이터는 모두 운영 시간과 휴무 요일 정보를 갖고 있다", () => {
+  for (const p of places) {
+    assert.match(p.openTime, /^\d{2}:\d{2}$/, `${p.name} openTime`);
+    assert.match(p.closeTime, /^\d{2}:\d{2}$/, `${p.name} closeTime`);
+    assert.ok(p.openTime < p.closeTime, `${p.name} 운영 시간 순서`);
+    assert.ok(p.closedDays.every((d) => d >= 0 && d <= 6), `${p.name} closedDays`);
+  }
 });

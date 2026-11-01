@@ -47,6 +47,9 @@ const PERSONAL_CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const PERSONAL_CODE_LENGTH = 6;
 const FRIENDS_STORAGE_KEY = "course-app:friends";
 const FRIEND_REQUESTS_STORAGE_KEY = "course-app:friend-requests";
+const GROUPS_STORAGE_KEY = "course-app:groups";
+const PLAN_DATE_STORAGE_KEY = "course-app:plan-date";
+const MAX_GROUP_NAME_LENGTH = 20;
 
 let nextId = 1;
 function generateId(prefix: string) {
@@ -151,6 +154,36 @@ function saveRecentDesignated(list: DesignatedPlace[]) {
   }
 }
 
+/** 오늘 날짜를 기기 시간대 기준 "YYYY-MM-DD"로 돌려준다 (날짜 입력칸이 쓰는 형식). */
+function todayString(): string {
+  const now = new Date();
+  const mm = String(now.getMonth() + 1).padStart(2, "0");
+  const dd = String(now.getDate()).padStart(2, "0");
+  return `${now.getFullYear()}-${mm}-${dd}`;
+}
+
+/** 저장해둔 일정 날짜를 불러온다. 없거나 이미 지난 날짜면 오늘로 대신한다. */
+function loadPlanDate(): string {
+  const today = todayString();
+  try {
+    const saved = window.localStorage.getItem(PLAN_DATE_STORAGE_KEY);
+    if (saved && /^\d{4}-\d{2}-\d{2}$/.test(saved) && saved >= today) return saved;
+  } catch {
+    // 저장소를 못 읽으면 오늘로 둔다.
+  }
+  return today;
+}
+
+const WEEKDAY_NAMES = ["일", "월", "화", "수", "목", "금", "토"];
+
+/** 카드에 보여줄 운영 시간 문구. 예: "10:00–18:00 · 매주 월요일 휴무" */
+function formatOpeningHours(place: Place): string {
+  const days = place.closedDays.map((d) => `${WEEKDAY_NAMES[d]}요일`).join("·");
+  return `${place.openTime}–${place.closeTime} · ${
+    days ? `매주 ${days} 휴무` : "휴무일 없음"
+  }`;
+}
+
 function positionLabel(index: number, total: number): "출발" | "경유" | "도착" {
   if (index === 0) return "출발";
   if (index === total - 1) return "도착";
@@ -162,6 +195,7 @@ function CourseBuilder() {
   const [maxTravelMinutes, setMaxTravelMinutes] = useState(
     DEFAULT_TRAVEL_MINUTES,
   );
+  const [planDate, setPlanDate] = useState("");
   const [hydrated, setHydrated] = useState(false);
   const [showResult, setShowResult] = useState(false);
   const [overrides, setOverrides] = useState<StageOverrides>({});
@@ -178,6 +212,7 @@ function CourseBuilder() {
   );
   const [locationStatus, setLocationStatus] = useState<LocationStatus>("idle");
   const [navigating, setNavigating] = useState(false);
+  const [groupScreenOpen, setGroupScreenOpen] = useState(false);
 
   useEffect(() => {
     // 위치 정보는 브라우저(외부 시스템)에서 비동기로 받아오므로 결과를
@@ -229,6 +264,7 @@ function CourseBuilder() {
     setStages(last ? dedupeStageIds(last.stages) : []);
     setMaxTravelMinutes(last ? last.maxTravelMinutes : DEFAULT_TRAVEL_MINUTES);
     setRecentDesignated(loadRecentDesignated());
+    setPlanDate(loadPlanDate());
     setHydrated(true);
   }, []);
 
@@ -237,9 +273,18 @@ function CourseBuilder() {
     saveLastInput(stages, maxTravelMinutes);
   }, [stages, maxTravelMinutes, hydrated]);
 
+  useEffect(() => {
+    if (!hydrated || !planDate) return;
+    try {
+      window.localStorage.setItem(PLAN_DATE_STORAGE_KEY, planDate);
+    } catch {
+      // 저장에 실패해도 이번 화면에서는 선택한 날짜가 유지된다.
+    }
+  }, [planDate, hydrated]);
+
   const result = useMemo(
-    () => buildCourse(stages, places, maxTravelMinutes, overrides),
-    [stages, maxTravelMinutes, overrides],
+    () => buildCourse(stages, places, maxTravelMinutes, overrides, planDate),
+    [stages, maxTravelMinutes, overrides, planDate],
   );
 
   function addRecommendStage(
@@ -300,6 +345,10 @@ function CourseBuilder() {
         )
       : null;
 
+  if (groupScreenOpen) {
+    return <GroupView onBack={() => setGroupScreenOpen(false)} />;
+  }
+
   if (navigating) {
     return (
       <NavigateView
@@ -333,7 +382,10 @@ function CourseBuilder() {
             style={{ flexGrow: AVATAR_FIXED_SHARE, flexBasis: 0 }}
             className="min-h-0"
           >
-            <AvatarScene status={locationStatus} />
+            <AvatarScene
+              status={locationStatus}
+              onOpenGroup={() => setGroupScreenOpen(true)}
+            />
           </div>
 
           <div
@@ -342,6 +394,8 @@ function CourseBuilder() {
           >
             <InputView
               stages={stages}
+              planDate={planDate}
+              onSetPlanDate={setPlanDate}
               maxTravelMinutes={maxTravelMinutes}
               onSetMaxTravelMinutes={setMaxTravelMinutes}
               onOpenAddSheet={() => setAddSheetOpen(true)}
@@ -382,6 +436,8 @@ function CourseBuilder() {
 }
 
 function InputView({
+  planDate,
+  onSetPlanDate,
   stages,
   maxTravelMinutes,
   onSetMaxTravelMinutes,
@@ -391,6 +447,8 @@ function InputView({
   onRequestChangeDesignated,
   onMakeCourse,
 }: {
+  planDate: string;
+  onSetPlanDate: (date: string) => void;
   stages: Stage[];
   maxTravelMinutes: number;
   onSetMaxTravelMinutes: (minutes: number) => void;
@@ -400,20 +458,43 @@ function InputView({
   onRequestChangeDesignated: (stageId: string) => void;
   onMakeCourse: () => void;
 }) {
+  const [travelPickerOpen, setTravelPickerOpen] = useState(false);
+
   return (
     <div className="mx-auto flex h-full w-full max-w-md flex-col gap-6 overflow-y-auto bg-white px-4 py-6 dark:bg-black">
       <h1 className="text-2xl font-bold text-black dark:text-white">
         코스 만들기
       </h1>
 
-      <section className="flex flex-col gap-2">
-        <label className="text-sm font-medium text-zinc-600 dark:text-zinc-400">
-          지역
-        </label>
-        <div className="flex h-12 w-full items-center rounded-xl border border-zinc-300 bg-zinc-50 px-4 text-base text-black dark:border-zinc-700 dark:bg-zinc-900 dark:text-white">
-          종로
-        </div>
-      </section>
+      <div className="flex gap-3">
+        <section className="flex min-w-0 flex-1 flex-col gap-2">
+          <label className="text-sm font-medium text-zinc-600 dark:text-zinc-400">
+            지역
+          </label>
+          <div className="flex h-12 w-full items-center rounded-xl border border-zinc-300 bg-zinc-50 px-4 text-base text-black dark:border-zinc-700 dark:bg-zinc-900 dark:text-white">
+            종로
+          </div>
+        </section>
+
+        <section className="flex min-w-0 flex-1 flex-col gap-2">
+          <label
+            htmlFor="plan-date"
+            className="text-sm font-medium text-zinc-600 dark:text-zinc-400"
+          >
+            일정 날짜
+          </label>
+          <input
+            id="plan-date"
+            type="date"
+            value={planDate}
+            min={todayString()}
+            onChange={(e) => {
+              if (e.target.value) onSetPlanDate(e.target.value);
+            }}
+            className="h-12 w-full min-w-0 rounded-xl border border-zinc-300 bg-white px-3 text-base text-black dark:border-zinc-700 dark:bg-zinc-900 dark:text-white dark:[color-scheme:dark]"
+          />
+        </section>
+      </div>
 
       <section className="flex flex-col gap-3">
         <label className="text-sm font-medium text-zinc-600 dark:text-zinc-400">
@@ -459,30 +540,30 @@ function InputView({
         )}
       </section>
 
-      <section className="flex flex-col gap-2">
-        <label
-          htmlFor="max-travel"
-          className="flex items-center justify-between text-sm font-medium text-zinc-600 dark:text-zinc-400"
+      <section className="flex items-center justify-between">
+        <span className="text-sm font-medium text-zinc-600 dark:text-zinc-400">
+          구간별 최대 이동시간
+        </span>
+        <button
+          type="button"
+          onClick={() => setTravelPickerOpen(true)}
+          aria-label={`구간별 최대 이동시간 ${maxTravelMinutes}분, 눌러서 바꾸기`}
+          className="flex h-11 items-center gap-1 rounded-lg border border-zinc-300 px-4 text-base font-semibold text-black dark:border-zinc-700 dark:text-white"
         >
-          <span>최대 이동시간</span>
-          <span className="text-black dark:text-white">
-            {maxTravelMinutes}분
-          </span>
-        </label>
-        <input
-          id="max-travel"
-          type="range"
-          min={MIN_TRAVEL_MINUTES}
-          max={MAX_TRAVEL_MINUTES}
-          value={maxTravelMinutes}
-          onChange={(e) => onSetMaxTravelMinutes(Number(e.target.value))}
-          className="h-11 w-full"
-        />
-        <div className="flex justify-between text-xs text-zinc-400 dark:text-zinc-500">
-          <span>{MIN_TRAVEL_MINUTES}분</span>
-          <span>{MAX_TRAVEL_MINUTES}분</span>
-        </div>
+          {maxTravelMinutes}분 <span aria-hidden>▾</span>
+        </button>
       </section>
+
+      {travelPickerOpen && (
+        <TravelTimePicker
+          value={maxTravelMinutes}
+          onConfirm={(minutes) => {
+            onSetMaxTravelMinutes(minutes);
+            setTravelPickerOpen(false);
+          }}
+          onClose={() => setTravelPickerOpen(false)}
+        />
+      )}
 
       <button
         type="button"
@@ -492,6 +573,101 @@ function InputView({
       >
         코스 만들기
       </button>
+    </div>
+  );
+}
+
+const TRAVEL_PICKER_ITEM_HEIGHT = 48;
+const TRAVEL_OPTIONS = Array.from(
+  { length: MAX_TRAVEL_MINUTES - MIN_TRAVEL_MINUTES + 1 },
+  (_, i) => MIN_TRAVEL_MINUTES + i,
+);
+
+/** 위아래로 스크롤해서 가운데에 멈춘 값을 고르는 구간별 최대 이동시간 선택창. */
+function TravelTimePicker({
+  value,
+  onConfirm,
+  onClose,
+}: {
+  value: number;
+  onConfirm: (minutes: number) => void;
+  onClose: () => void;
+}) {
+  const listRef = useRef<HTMLDivElement>(null);
+  const [selected, setSelected] = useState(value);
+
+  useEffect(() => {
+    // 열릴 때 현재 값이 가운데에 오도록 한 번만 맞춘다.
+    listRef.current?.scrollTo({ top: (value - MIN_TRAVEL_MINUTES) * TRAVEL_PICKER_ITEM_HEIGHT });
+  }, [value]);
+
+  function onScroll() {
+    const el = listRef.current;
+    if (!el) return;
+    const index = Math.round(el.scrollTop / TRAVEL_PICKER_ITEM_HEIGHT);
+    const clamped = Math.min(Math.max(index, 0), TRAVEL_OPTIONS.length - 1);
+    setSelected(TRAVEL_OPTIONS[clamped]);
+  }
+
+  return (
+    <div className="fixed inset-0 z-10 flex items-end justify-center bg-black/50 pb-16">
+      <div className="mx-2 flex w-full max-w-md flex-col gap-4 rounded-2xl bg-white p-4 dark:bg-zinc-900">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-bold text-black dark:text-white">구간별 최대 이동시간</h2>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="닫기"
+            className="flex h-9 w-9 items-center justify-center rounded-lg border border-zinc-300 dark:border-zinc-700 dark:text-white"
+          >
+            ✕
+          </button>
+        </div>
+
+        <div className="relative" style={{ height: TRAVEL_PICKER_ITEM_HEIGHT * 3 }}>
+          <div
+            className="pointer-events-none absolute inset-x-0 rounded-lg bg-zinc-100 dark:bg-zinc-800"
+            style={{ top: TRAVEL_PICKER_ITEM_HEIGHT, height: TRAVEL_PICKER_ITEM_HEIGHT }}
+          />
+          <div
+            ref={listRef}
+            onScroll={onScroll}
+            data-testid="travel-picker"
+            className="relative h-full snap-y snap-mandatory overflow-y-scroll"
+            style={{ scrollbarWidth: "none" }}
+          >
+            <div style={{ height: TRAVEL_PICKER_ITEM_HEIGHT }} />
+            {TRAVEL_OPTIONS.map((m) => (
+              <div
+                key={m}
+                onClick={() =>
+                  listRef.current?.scrollTo({
+                    top: (m - MIN_TRAVEL_MINUTES) * TRAVEL_PICKER_ITEM_HEIGHT,
+                    behavior: "smooth",
+                  })
+                }
+                className={`flex snap-center items-center justify-center text-xl ${
+                  m === selected
+                    ? "font-bold text-black dark:text-white"
+                    : "text-zinc-400 dark:text-zinc-500"
+                }`}
+                style={{ height: TRAVEL_PICKER_ITEM_HEIGHT }}
+              >
+                {m}분
+              </div>
+            ))}
+            <div style={{ height: TRAVEL_PICKER_ITEM_HEIGHT }} />
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => onConfirm(selected)}
+          className="h-12 w-full rounded-xl bg-black text-base font-semibold text-white dark:bg-white dark:text-black"
+        >
+          확인
+        </button>
+      </div>
     </div>
   );
 }
@@ -957,14 +1133,21 @@ function ResultView({
             {blockingDesignated && blockingDesignated.kind === "designated" ? (
               <p className="text-sm text-zinc-500 dark:text-zinc-400">
                 &apos;{blockingDesignated.stage.place.name}&apos; 지정 장소
-                근처라서 그래요. 최대 이동시간을 늘리거나 지정 장소를
+                근처라서 그래요. 구간별 최대 이동시간을 늘리거나 지정 장소를
                 바꿔보세요.
               </p>
             ) : (
               <p className="text-sm text-zinc-500 dark:text-zinc-400">
-                최대 이동시간을 늘리거나 세부 카테고리를 해제해보세요.
+                구간별 최대 이동시간을 늘리거나 세부 카테고리를 해제해보세요.
               </p>
             )}
+            {failedStage?.kind === "recommend" &&
+              failedStage.closedExcludedCount > 0 && (
+                <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                  일정 날짜에 쉬는 {failedStage.closedExcludedCount}곳은 후보에서
+                  제외됐어요. 날짜를 바꿔보는 것도 방법이에요.
+                </p>
+              )}
           </div>
         </div>
       ) : (
@@ -1044,6 +1227,9 @@ function ResultView({
                       <span className="text-sm text-zinc-500 dark:text-zinc-500">
                         {stageResult.selected.description}
                       </span>
+                      <span className="text-sm text-zinc-600 dark:text-zinc-400">
+                        🕒 {formatOpeningHours(stageResult.selected)}
+                      </span>
                     </div>
                   )}
 
@@ -1079,6 +1265,9 @@ function ResultView({
                       >
                         카카오맵에서 보기
                       </a>
+                      <span className="text-sm text-zinc-500 dark:text-zinc-500">
+                        🕒 운영 시간 정보 없음
+                      </span>
                     </div>
                   )}
                 </li>
@@ -1437,6 +1626,43 @@ function ReplaceSheet({
   );
 }
 
+/** 지도 위 동선의 가운데에 "도보 N분"을 보여주는 작은 말풍선. */
+function WalkBubble({
+  from,
+  to,
+  minutes,
+}: {
+  from: { x: number; y: number };
+  to: { x: number; y: number };
+  minutes: number;
+}) {
+  const label = `도보 ${Math.round(minutes)}분`;
+  const width = label.length * 7 + 12;
+  const cx = (from.x + to.x) / 2;
+  const cy = (from.y + to.y) / 2;
+  return (
+    <g pointerEvents="none">
+      <rect
+        x={cx - width / 2}
+        y={cy - 10}
+        width={width}
+        height={20}
+        rx={10}
+        className="fill-white stroke-blue-500 dark:fill-zinc-800 dark:stroke-blue-400"
+        strokeWidth={1.5}
+      />
+      <text
+        x={cx}
+        y={cy + 4}
+        textAnchor="middle"
+        className="fill-blue-600 text-[11px] font-semibold dark:fill-blue-300"
+      >
+        {label}
+      </text>
+    </g>
+  );
+}
+
 function StubMap({
   decidedStages,
   candidates,
@@ -1620,6 +1846,24 @@ function StubMap({
             </g>
           );
         })}
+
+        {lastDecided && previewProjected && previewPoint && (
+          <WalkBubble
+            from={lastDecided}
+            to={previewProjected}
+            minutes={walkingMinutesBetween(
+              decidedPoints[decidedPoints.length - 1],
+              previewPoint.place,
+            )}
+          />
+        )}
+        {previewProjected && previewPoint && nextProjected && nextSelected && (
+          <WalkBubble
+            from={previewProjected}
+            to={nextProjected}
+            minutes={walkingMinutesBetween(previewPoint.place, nextSelected)}
+          />
+        )}
       </svg>
 
       {zoomPan.isZoomed && <ZoomResetButton onClick={zoomPan.reset} />}
@@ -1689,6 +1933,15 @@ function RouteMap({
             className="text-blue-500 dark:text-blue-400"
           />
         )}
+
+        {projected.slice(1).map((end, i) => (
+          <WalkBubble
+            key={`leg-${i}`}
+            from={projected[i]}
+            to={end}
+            minutes={walkingMinutesBetween(points[i], points[i + 1])}
+          />
+        ))}
 
         {points.map((point, i) => {
           const p = projected[i];
@@ -1830,7 +2083,13 @@ function LoginScreen({ onLogin }: { onLogin: () => void }) {
 }
 
 /** 아직 지도 없이, 여행을 기다리며 앉아있는 내 아바타를 보여주는 임시 장면. */
-function AvatarScene({ status }: { status: LocationStatus }) {
+function AvatarScene({
+  status,
+  onOpenGroup,
+}: {
+  status: LocationStatus;
+  onOpenGroup: () => void;
+}) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [friendsOpen, setFriendsOpen] = useState(false);
   const statusText =
@@ -1900,9 +2159,10 @@ function AvatarScene({ status }: { status: LocationStatus }) {
 
       <button
         type="button"
-        className="absolute bottom-2 right-2 flex h-8 items-center gap-1 rounded-full bg-white/80 px-3 text-xs font-medium text-zinc-700 shadow-sm dark:bg-black/40 dark:text-zinc-200"
+        onClick={onOpenGroup}
+        className="absolute right-0 top-1/2 flex h-10 -translate-y-1/2 items-center gap-1 rounded-l-full bg-white/80 pl-3 pr-2 text-xs font-medium text-zinc-700 shadow-sm dark:bg-black/40 dark:text-zinc-200"
       >
-        👥 그룹
+        그룹으로 <span aria-hidden>▶</span>
       </button>
 
       {settingsOpen && <SettingsSheet onClose={() => setSettingsOpen(false)} />}
@@ -2171,6 +2431,114 @@ function FriendsSheet({ onClose }: { onClose: () => void }) {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+/** 아바타 화면의 "그룹으로" 버튼으로 들어오는 그룹 화면. 그룹 이름만 이 기기에 저장한다. */
+function GroupView({ onBack }: { onBack: () => void }) {
+  const [groups, setGroups] = useState<string[]>([]);
+  const [input, setInput] = useState("");
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    // localStorage는 브라우저에서만 읽을 수 있어 마운트 후에 한 번 불러온다.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setGroups(loadCodeList(GROUPS_STORAGE_KEY));
+  }, []);
+
+  function save(next: string[]) {
+    setGroups(next);
+    saveCodeList(GROUPS_STORAGE_KEY, next);
+  }
+
+  function add() {
+    const name = input.trim();
+    if (name.length === 0) {
+      setError("그룹 이름을 입력해주세요.");
+    } else if (groups.includes(name)) {
+      setError("이미 있는 그룹 이름이에요.");
+    } else {
+      save([...groups, name]);
+      setInput("");
+      setError("");
+    }
+  }
+
+  return (
+    <div className="mx-auto flex h-screen w-full max-w-md flex-col gap-6 overflow-y-auto bg-white px-4 py-6 dark:bg-black">
+      <div className="flex items-center gap-3">
+        <button
+          type="button"
+          onClick={onBack}
+          aria-label="뒤로가기"
+          className="flex h-11 w-11 items-center justify-center rounded-lg border border-zinc-300 text-lg dark:border-zinc-700 dark:text-white"
+        >
+          ←
+        </button>
+        <h1 className="text-2xl font-bold text-black dark:text-white">그룹</h1>
+      </div>
+
+      <section className="flex flex-col gap-2">
+        <h2 className="text-sm font-medium text-zinc-600 dark:text-zinc-400">
+          그룹 추가하기
+        </h2>
+        <div className="flex gap-2">
+          <input
+            value={input}
+            onChange={(e) => {
+              setInput(e.target.value);
+              setError("");
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") add();
+            }}
+            maxLength={MAX_GROUP_NAME_LENGTH}
+            placeholder="그룹 이름"
+            className="h-12 min-w-0 flex-1 rounded-lg border border-zinc-300 bg-white px-3 text-base text-black dark:border-zinc-700 dark:bg-zinc-900 dark:text-white"
+          />
+          <button
+            type="button"
+            onClick={add}
+            className="h-12 rounded-lg bg-black px-4 text-sm font-semibold text-white dark:bg-white dark:text-black"
+          >
+            추가
+          </button>
+        </div>
+        {error && <p className="text-xs text-red-500">{error}</p>}
+      </section>
+
+      <section className="flex flex-col gap-2">
+        <h2 className="text-sm font-medium text-zinc-600 dark:text-zinc-400">
+          그룹 목록 {groups.length > 0 && `(${groups.length})`}
+        </h2>
+        {groups.length === 0 ? (
+          <p className="text-sm text-zinc-500 dark:text-zinc-400">
+            아직 그룹이 없어요. 이름을 입력해 그룹을 만들어보세요.
+          </p>
+        ) : (
+          <ul className="flex flex-col gap-2">
+            {groups.map((name) => (
+              <li
+                key={name}
+                className="flex items-center justify-between rounded-lg border border-zinc-300 px-3 py-2 dark:border-zinc-700"
+              >
+                <span className="text-base font-semibold text-black dark:text-white">
+                  👥 {name}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => save(groups.filter((g) => g !== name))}
+                  aria-label={`${name} 삭제`}
+                  className="flex h-9 w-9 items-center justify-center rounded-lg border border-zinc-300 text-red-500 dark:border-zinc-700"
+                >
+                  ✕
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
     </div>
   );
 }
