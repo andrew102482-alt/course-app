@@ -69,7 +69,7 @@ test("약 110m 떨어진 두 지점의 도보 시간은 1.3배 가산된 값과 
 
 test("'전시 → 맛집(일식) → 카페' 코스는 15분 기준으로 3곳을 모두 추천한다 (지정 장소 없음)", () => {
   const stages: Stage[] = [
-    recommend("s1", "전시"),
+    recommend("s1", "문화 생활"),
     recommend("s2", "맛집", "일식"),
     recommend("s3", "카페"),
   ];
@@ -86,9 +86,9 @@ test("'전시 → 맛집(일식) → 카페' 코스는 15분 기준으로 3곳�
 test("최대 이동시간을 넘는 후보는 자동 선택에서 제외되지만, 교체용 후보 목록에는 '초과' 표시로 남아있다", () => {
   const near = place({ id: "near", category: "카페", lat: 37.5742, lng: 126.9845, rating: 3.5 });
   const far = place({ id: "far", category: "카페", lat: 37.65, lng: 126.9845, rating: 4.9 });
-  const start = place({ id: "start", category: "전시" });
+  const start = place({ id: "start", category: "문화 생활" });
 
-  const stages: Stage[] = [recommend("s1", "전시"), recommend("s2", "카페")];
+  const stages: Stage[] = [recommend("s1", "문화 생활"), recommend("s2", "카페")];
   const result = buildCourse(stages, [start, near, far], 15);
 
   const s2 = result.stages[1];
@@ -100,7 +100,7 @@ test("최대 이동시간을 넘는 후보는 자동 선택에서 제외되지�
 });
 
 test("selected가 null이어도 previous는 리셋되지 않고 다음 단계는 마지막 장소를 기준으로 계산한다", () => {
-  const exhibit = place({ id: "exhibit", category: "전시" });
+  const exhibit = place({ id: "exhibit", category: "문화 생활" });
   const farCafe = place({ id: "far-cafe", category: "카페", lat: 37.65 });
   const nearRestaurant = place({
     id: "near-restaurant",
@@ -110,7 +110,7 @@ test("selected가 null이어도 previous는 리셋되지 않고 다음 단계는
   });
 
   const stages: Stage[] = [
-    recommend("s1", "전시"),
+    recommend("s1", "문화 생활"),
     recommend("s2", "카페"),
     recommend("s3", "맛집"),
   ];
@@ -125,11 +125,11 @@ test("selected가 null이어도 previous는 리셋되지 않고 다음 단계는
 });
 
 test("overrides로 지정한 장소는 최대 이동시간을 넘어도 강제로 선택된다", () => {
-  const start = place({ id: "start", category: "전시" });
+  const start = place({ id: "start", category: "문화 생활" });
   const near = place({ id: "near", category: "카페", rating: 3.5 });
   const far = place({ id: "far", category: "카페", lat: 37.65, rating: 4.9 });
 
-  const stages: Stage[] = [recommend("s1", "전시"), recommend("s2", "카페")];
+  const stages: Stage[] = [recommend("s1", "문화 생활"), recommend("s2", "카페")];
   const result = buildCourse(stages, [start, near, far], 15, { s2: "far" });
 
   assert.equal(result.stages[1].selected?.id, "far");
@@ -159,9 +159,9 @@ test("이미 선택된 장소는 다음 단계 후보에서 제외된다", () =>
 
 test("출발지만 지정한 경우: 지정 장소는 그대로 들어가고 다음 추천 단계는 그 장소를 기준으로 계산한다", () => {
   const start = designated("start", { lat: 37.5742, lng: 126.9845 });
-  const near = place({ id: "near", category: "전시", lat: 37.5745, lng: 126.985 });
+  const near = place({ id: "near", category: "문화 생활", lat: 37.5745, lng: 126.985 });
 
-  const stages: Stage[] = [start, recommend("s2", "전시")];
+  const stages: Stage[] = [start, recommend("s2", "문화 생활")];
   const result = buildCourse(stages, [near], 15);
 
   assert.equal(result.success, true);
@@ -177,14 +177,14 @@ test("중간에 지정 장소가 있으면, 그 앞 추천 단계는 이전 장�
   const midDesignated = designated("mid", { lat: 37.5745, lng: 126.985 });
   const nearExhibit = place({
     id: "near-exhibit",
-    category: "전시",
+    category: "문화 생활",
     lat: 37.5744,
     lng: 126.9847,
     rating: 3.6,
   });
   const farExhibit = place({
     id: "far-exhibit",
-    category: "전시",
+    category: "문화 생활",
     lat: 37.6,
     lng: 126.9845,
     rating: 4.9,
@@ -192,7 +192,7 @@ test("중간에 지정 장소가 있으면, 그 앞 추천 단계는 이전 장�
 
   const stages: Stage[] = [
     recommend("s1", "맛집"),
-    recommend("s2", "전시"),
+    recommend("s2", "문화 생활"),
     midDesignated,
   ];
 
@@ -216,12 +216,12 @@ test("지정 장소끼리 바로 이어진 구간이 최대 이동시간을 넘�
 });
 
 test("추천 단계가 다음 지정 장소 때문에 막히면 blockedByDesignated가 true다", () => {
-  const start = place({ id: "start", category: "전시", lat: 37.5742, lng: 126.9845 });
+  const start = place({ id: "start", category: "문화 생활", lat: 37.5742, lng: 126.9845 });
   // near는 start와는 가깝지만 지정 장소와는 멀다.
   const near = place({ id: "near", category: "맛집", lat: 37.5745, lng: 126.985 });
   const farDesignated = designated("far", { lat: 37.65, lng: 126.9845 });
 
-  const stages: Stage[] = [recommend("s1", "전시"), recommend("s2", "맛집"), farDesignated];
+  const stages: Stage[] = [recommend("s1", "문화 생활"), recommend("s2", "맛집"), farDesignated];
   const result = buildCourse(stages, [start, near], 15);
 
   assert.equal(result.success, false);

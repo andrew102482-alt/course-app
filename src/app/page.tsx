@@ -17,12 +17,14 @@ import {
   type StageResult,
 } from "@/lib/course";
 
-const CATEGORIES: PlaceCategory[] = ["전시", "맛집", "카페"];
+const CATEGORIES: PlaceCategory[] = ["문화 생활", "액티비티", "맛집", "카페", "술집"];
 
 const SUB_CATEGORIES: Record<PlaceCategory, string[]> = {
-  전시: [],
+  "문화 생활": [],
+  액티비티: [],
   맛집: ["한식", "일식", "양식", "중식"],
   카페: ["디저트", "브런치", "뷰"],
+  술집: [],
 };
 
 const MIN_TRAVEL_MINUTES = 5;
@@ -31,7 +33,7 @@ const DEFAULT_TRAVEL_MINUTES = 15;
 const MAX_STAGES = 8;
 const MAX_RECENT_DESIGNATED = 10;
 /** 아바타 영역이 차지하는 화면 비율(나머지는 코스 만들기 패널). 드래그로 바꿀 수 없는 고정값. */
-const AVATAR_FIXED_SHARE = 0.4;
+const AVATAR_FIXED_SHARE = 0.35;
 
 const LAST_INPUT_STORAGE_KEY = "course-app:last-input";
 const RECENT_DESIGNATED_STORAGE_KEY = "course-app:recent-designated";
@@ -50,7 +52,12 @@ function dedupeStageIds(stages: Stage[]): Stage[] {
   // 과거 버전의 id 생성 방식 때문에 localStorage에 이미 중복된 id로 저장된
   // 일정이 있을 수 있어, 불러올 때 중복분만 새 id로 바꿔준다.
   const seen = new Set<string>();
-  return stages.map((stage) => {
+  return stages.map((raw) => {
+    // 예전에 "전시"로 저장된 추천 단계는 "문화 생활"로 옮긴다.
+    const stage =
+      (raw as { category?: string }).category === "전시"
+        ? ({ ...raw, category: "문화 생활" } as Stage)
+        : raw;
     if (!seen.has(stage.id)) {
       seen.add(stage.id);
       return stage;
@@ -339,7 +346,7 @@ function InputView({
 
         {stages.length === 0 && (
           <p className="text-sm text-zinc-400 dark:text-zinc-500">
-            예: 전시 → 맛집 → 카페. 아래 버튼으로 단계를 추가해보세요.
+            예: 문화 생활 → 맛집 → 카페. 아래 버튼으로 단계를 추가해보세요.
           </p>
         )}
 
@@ -499,15 +506,24 @@ function AddStageSheet({
   onAddRecommend: (category: PlaceCategory, subCategory: string | undefined) => void;
   onStartDesignated: () => void;
 }) {
-  const [mode, setMode] = useState<"choose" | "recommend">("choose");
-  const [category, setCategory] = useState<PlaceCategory>("전시");
-  const [subCategory, setSubCategory] = useState("상관없음");
+  // 카테고리를 고르면, 세부 카테고리가 있는 항목(맛집·카페)만 한 번 더 고르고 나머지는 바로 추가한다.
+  const [category, setCategory] = useState<PlaceCategory | null>(null);
+
+  function pickCategory(c: PlaceCategory) {
+    if (SUB_CATEGORIES[c].length > 0) {
+      setCategory(c);
+    } else {
+      onAddRecommend(c, undefined);
+    }
+  }
 
   return (
-    <div className="fixed inset-0 z-10 flex items-end justify-center bg-black/50">
-      <div className="flex max-h-[75vh] w-full max-w-md flex-col gap-4 overflow-y-auto rounded-t-2xl bg-white p-4 dark:bg-zinc-900">
+    <div className="fixed inset-0 z-10 flex items-end justify-center bg-black/50 pb-16">
+      <div className="mx-2 flex max-h-[70vh] w-full max-w-md flex-col gap-4 overflow-y-auto rounded-2xl bg-white p-4 dark:bg-zinc-900">
         <div className="flex items-center justify-between">
-          <h2 className="text-lg font-bold text-black dark:text-white">단계 추가</h2>
+          <h2 className="text-lg font-bold text-black dark:text-white">
+            {category ? `${category} 세부 카테고리` : "단계 추가"}
+          </h2>
           <button
             type="button"
             onClick={onClose}
@@ -524,15 +540,20 @@ function AddStageSheet({
           </p>
         )}
 
-        {canAddMore && mode === "choose" && (
+        {canAddMore && category === null && (
           <div className="flex flex-col gap-3">
-            <button
-              type="button"
-              onClick={() => setMode("recommend")}
-              className="flex h-14 w-full items-center justify-center rounded-xl border border-zinc-300 text-base font-medium text-black dark:border-zinc-700 dark:text-white"
-            >
-              추천받기
-            </button>
+            <div className="grid grid-cols-2 gap-2">
+              {CATEGORIES.map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  onClick={() => pickCategory(c)}
+                  className="flex h-14 items-center justify-center rounded-xl border border-zinc-300 text-base font-medium text-black dark:border-zinc-700 dark:text-white"
+                >
+                  {c}
+                </button>
+              ))}
+            </div>
             <button
               type="button"
               onClick={onStartDesignated}
@@ -548,64 +569,33 @@ function AddStageSheet({
           </div>
         )}
 
-        {canAddMore && mode === "recommend" && (
-          <div className="flex flex-col gap-3">
-            <div className="flex flex-col gap-2">
-              <span className="text-sm font-medium text-zinc-600 dark:text-zinc-400">
-                카테고리
-              </span>
-              <div className="flex gap-2">
-                {CATEGORIES.map((c) => (
-                  <button
-                    key={c}
-                    type="button"
-                    onClick={() => {
-                      setCategory(c);
-                      setSubCategory("상관없음");
-                    }}
-                    className={`h-11 flex-1 rounded-lg border text-base ${
-                      category === c
-                        ? "border-black bg-black text-white dark:border-white dark:bg-white dark:text-black"
-                        : "border-zinc-300 text-black dark:border-zinc-700 dark:text-white"
-                    }`}
-                  >
-                    {c}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {SUB_CATEGORIES[category].length > 0 && (
-              <div className="flex flex-col gap-2">
-                <span className="text-sm font-medium text-zinc-600 dark:text-zinc-400">
-                  세부 카테고리
-                </span>
-                <select
-                  value={subCategory}
-                  onChange={(e) => setSubCategory(e.target.value)}
-                  className="h-11 w-full rounded-lg border border-zinc-300 bg-white px-3 text-base text-black dark:border-zinc-700 dark:bg-zinc-900 dark:text-white"
-                >
-                  <option value="상관없음">상관없음</option>
-                  {SUB_CATEGORIES[category].map((sub) => (
-                    <option key={sub} value={sub}>
-                      {sub}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
-
+        {canAddMore && category !== null && (
+          <div className="flex flex-col gap-2">
             <button
               type="button"
-              onClick={() =>
-                onAddRecommend(
-                  category,
-                  subCategory === "상관없음" ? undefined : subCategory,
-                )
-              }
+              onClick={() => onAddRecommend(category, undefined)}
               className="h-12 w-full rounded-xl bg-black text-base font-semibold text-white dark:bg-white dark:text-black"
             >
-              추가
+              상관없음
+            </button>
+            <div className="grid grid-cols-2 gap-2">
+              {SUB_CATEGORIES[category].map((sub) => (
+                <button
+                  key={sub}
+                  type="button"
+                  onClick={() => onAddRecommend(category, sub)}
+                  className="h-12 rounded-xl border border-zinc-300 text-base text-black dark:border-zinc-700 dark:text-white"
+                >
+                  {sub}
+                </button>
+              ))}
+            </div>
+            <button
+              type="button"
+              onClick={() => setCategory(null)}
+              className="h-11 w-full text-sm text-zinc-500 dark:text-zinc-400"
+            >
+              ← 다른 카테고리 고르기
             </button>
           </div>
         )}
