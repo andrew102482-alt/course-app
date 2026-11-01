@@ -13,7 +13,11 @@
       "Bash(git add *)",
       "Bash(git commit -m ' *)",
       "Bash(npx tsc *)",
-      "Bash(node -e ' *)"
+      "Bash(node -e ' *)",
+      "Bash(npm test *)",
+      "Skill(loop)",
+      "Bash(lsof -iTCP:3000 -sTCP:LISTEN -n -P)",
+      "Bash(lsof -iTCP:3001 -sTCP:LISTEN -n -P)"
     ]
   }
 }
