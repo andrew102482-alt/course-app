@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Reorder, useDragControls } from "framer-motion";
 import { places, type Place, type PlaceCategory } from "@/data/places";
 import {
@@ -1058,6 +1058,7 @@ function useZoomPan() {
   const [scale, setScale] = useState(1);
   const [translate, setTranslate] = useState({ x: 0, y: 0 });
 
+  const svgRef = useRef<SVGSVGElement>(null);
   const pointers = useRef(new Map<number, { x: number; y: number }>());
   const pinchRef = useRef<{
     distance: number;
@@ -1068,22 +1069,42 @@ function useZoomPan() {
     null,
   );
 
-  function zoomAt(point: { x: number; y: number }, s0: number, t0: typeof translate, nextScaleRaw: number) {
-    const s1 = clampZoomScale(nextScaleRaw);
-    setScale(s1);
-    setTranslate({
-      x: point.x - ((point.x - t0.x) * s1) / s0,
-      y: point.y - ((point.y - t0.y) * s1) / s0,
-    });
-  }
+  const zoomAt = useCallback(
+    (point: { x: number; y: number }, s0: number, t0: { x: number; y: number }, nextScaleRaw: number) => {
+      const s1 = clampZoomScale(nextScaleRaw);
+      setScale(s1);
+      setTranslate({
+        x: point.x - ((point.x - t0.x) * s1) / s0,
+        y: point.y - ((point.y - t0.y) * s1) / s0,
+      });
+    },
+    [],
+  );
 
-  function onWheel(e: React.WheelEvent<SVGSVGElement>) {
-    e.preventDefault();
-    const rect = e.currentTarget.getBoundingClientRect();
-    const point = { x: e.clientX - rect.left, y: e.clientY - rect.top };
-    const factor = Math.exp(-e.deltaY * 0.0015);
-    zoomAt(point, scale, translate, scale * factor);
-  }
+  // 휠로 확대/축소할 때 페이지가 같이 스크롤되지 않도록 e.preventDefault()가 필요한데,
+  // React의 onWheel은 passive 리스너로 붙어서 그 안에서 preventDefault를 호출하면
+  // "Unable to preventDefault inside passive event listener invocation" 콘솔 에러가 난다.
+  // 그래서 ref로 DOM에 직접 passive:false 리스너를 붙인다.
+  const scaleRef = useRef(scale);
+  const translateRef = useRef(translate);
+  useEffect(() => {
+    scaleRef.current = scale;
+    translateRef.current = translate;
+  }, [scale, translate]);
+
+  useEffect(() => {
+    const el = svgRef.current;
+    if (!el) return;
+    const handleWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const rect = el.getBoundingClientRect();
+      const point = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+      const factor = Math.exp(-e.deltaY * 0.0015);
+      zoomAt(point, scaleRef.current, translateRef.current, scaleRef.current * factor);
+    };
+    el.addEventListener("wheel", handleWheel, { passive: false });
+    return () => el.removeEventListener("wheel", handleWheel);
+  }, [zoomAt]);
 
   function onPointerDown(e: React.PointerEvent<SVGSVGElement>) {
     e.currentTarget.setPointerCapture(e.pointerId);
@@ -1135,13 +1156,18 @@ function useZoomPan() {
     setTranslate({ x: 0, y: 0 });
   }
 
-  return {
-    scale,
-    translate,
-    isZoomed: scale > 1.001,
-    handlers: { onWheel, onPointerDown, onPointerMove, onPointerUp },
-    reset,
-  };
+  // svgRef는 다른 값들과 분리해서 반환한다: 하나의 객체에 ref와 렌더용 값을 같이 담으면
+  // 렌더 중 zoomPan.scale처럼 접근할 때도 린트가 "ref를 렌더 중 접근"으로 오인한다.
+  return [
+    {
+      scale,
+      translate,
+      isZoomed: scale > 1.001,
+      handlers: { onPointerDown, onPointerMove, onPointerUp },
+      reset,
+    },
+    svgRef,
+  ] as const;
 }
 
 function ZoomResetButton({ onClick }: { onClick: () => void }) {
@@ -1289,7 +1315,7 @@ function StubMap({
   nextSelected: Place | DesignatedPlace | null;
   onTapCandidate: (placeId: string) => void;
 }) {
-  const zoomPan = useZoomPan();
+  const [zoomPan, zoomSvgRef] = useZoomPan();
 
   const decidedPoints: MapPoint[] = decidedStages
     .filter((s) => s.selected !== null)
@@ -1321,6 +1347,7 @@ function StubMap({
   return (
     <div className="relative h-full w-full overflow-hidden bg-zinc-100 dark:bg-zinc-900">
       <svg
+        ref={zoomSvgRef}
         viewBox={`0 0 ${MAP_VIEW_SIZE} ${MAP_VIEW_SIZE}`}
         className={`h-full w-full ${zoomPan.scale > 1 ? "cursor-grab active:cursor-grabbing" : ""}`}
         style={{
@@ -1452,7 +1479,7 @@ function RouteMap({
   stages: StageResult[];
   avatarPoint?: { lat: number; lng: number } | null;
 }) {
-  const zoomPan = useZoomPan();
+  const [zoomPan, zoomSvgRef] = useZoomPan();
 
   const points: MapPoint[] = stages
     .filter((s) => s.selected !== null)
@@ -1476,6 +1503,7 @@ function RouteMap({
   return (
     <div className="relative h-full w-full overflow-hidden bg-zinc-100 dark:bg-zinc-900">
       <svg
+        ref={zoomSvgRef}
         viewBox={`0 0 ${MAP_VIEW_SIZE} ${MAP_VIEW_SIZE}`}
         className={`h-full w-full ${zoomPan.scale > 1 ? "cursor-grab active:cursor-grabbing" : ""}`}
         style={{
