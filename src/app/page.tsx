@@ -2,7 +2,12 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Reorder, useDragControls } from "framer-motion";
-import { places, type Place, type PlaceCategory } from "@/data/places";
+import {
+  SUB_CATEGORIES,
+  places,
+  type Place,
+  type PlaceCategory,
+} from "@/data/places";
 import {
   REGION_CENTER,
   buildCourse,
@@ -17,15 +22,14 @@ import {
   type StageResult,
 } from "@/lib/course";
 
-const CATEGORIES: PlaceCategory[] = ["문화 생활", "액티비티", "맛집", "카페", "술집"];
-
-const SUB_CATEGORIES: Record<PlaceCategory, string[]> = {
-  "문화 생활": [],
-  액티비티: [],
-  맛집: ["한식", "일식", "양식", "중식"],
-  카페: ["디저트", "브런치", "뷰"],
-  술집: [],
-};
+const CATEGORIES: PlaceCategory[] = [
+  "문화 생활",
+  "액티비티",
+  "맛집",
+  "카페",
+  "술집",
+  "쇼핑",
+];
 
 const MIN_TRAVEL_MINUTES = 5;
 const MAX_TRAVEL_MINUTES = 30;
@@ -37,15 +41,43 @@ const AVATAR_FIXED_SHARE = 0.35;
 
 const LAST_INPUT_STORAGE_KEY = "course-app:last-input";
 const RECENT_DESIGNATED_STORAGE_KEY = "course-app:recent-designated";
+const PERSONAL_CODE_STORAGE_KEY = "course-app:personal-code";
+// 헷갈리기 쉬운 글자(0/O, 1/I)는 뺀 개인 코드용 글자들.
+const PERSONAL_CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+const PERSONAL_CODE_LENGTH = 6;
+const FRIENDS_STORAGE_KEY = "course-app:friends";
+const FRIEND_REQUESTS_STORAGE_KEY = "course-app:friend-requests";
 
 let nextId = 1;
 function generateId(prefix: string) {
   // localStorage에 저장된 이전 세션의 id와 겹치지 않도록, 페이지가 새로 열릴 때마다
   // 초기화되는 카운터 대신 브라우저가 제공하는 무작위 값을 사용한다.
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+  if (
+    typeof crypto !== "undefined" &&
+    typeof crypto.randomUUID === "function"
+  ) {
     return `${prefix}-${crypto.randomUUID()}`;
   }
   return `${prefix}-${Date.now()}-${nextId++}`;
+}
+
+/** 이전 버전에서 저장된 카테고리·세부 카테고리 이름을 지금 이름으로 바꾼다. */
+const OLD_SUB_CATEGORY_NAMES: Record<string, string> = {
+  디저트: "디저트 중심",
+  브런치: "커피 중심",
+  뷰: "공간 특화",
+};
+
+function migrateStage(stage: Stage): Stage {
+  if (stage.kind !== "recommend") return stage;
+  const oldCategory = stage.category as string;
+  const category = (
+    oldCategory === "전시" ? "문화 생활" : oldCategory
+  ) as PlaceCategory;
+  const sub = stage.subCategory;
+  const subCategory =
+    sub && category === "카페" ? (OLD_SUB_CATEGORY_NAMES[sub] ?? sub) : sub;
+  return { ...stage, category, subCategory };
 }
 
 function dedupeStageIds(stages: Stage[]): Stage[] {
@@ -54,10 +86,7 @@ function dedupeStageIds(stages: Stage[]): Stage[] {
   const seen = new Set<string>();
   return stages.map((raw) => {
     // 예전에 "전시"로 저장된 추천 단계는 "문화 생활"로 옮긴다.
-    const stage =
-      (raw as { category?: string }).category === "전시"
-        ? ({ ...raw, category: "문화 생활" } as Stage)
-        : raw;
+    const stage = migrateStage(raw);
     if (!seen.has(stage.id)) {
       seen.add(stage.id);
       return stage;
@@ -74,7 +103,10 @@ function loadLastInput(): { stages: Stage[]; maxTravelMinutes: number } | null {
     const raw = window.localStorage.getItem(LAST_INPUT_STORAGE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed.stages) || typeof parsed.maxTravelMinutes !== "number") {
+    if (
+      !Array.isArray(parsed.stages) ||
+      typeof parsed.maxTravelMinutes !== "number"
+    ) {
       return null;
     }
     return parsed;
@@ -110,7 +142,10 @@ function loadRecentDesignated(): DesignatedPlace[] {
 function saveRecentDesignated(list: DesignatedPlace[]) {
   if (typeof window === "undefined") return;
   try {
-    window.localStorage.setItem(RECENT_DESIGNATED_STORAGE_KEY, JSON.stringify(list));
+    window.localStorage.setItem(
+      RECENT_DESIGNATED_STORAGE_KEY,
+      JSON.stringify(list),
+    );
   } catch {
     // 무시
   }
@@ -124,15 +159,23 @@ function positionLabel(index: number, total: number): "출발" | "경유" | "도
 
 function CourseBuilder() {
   const [stages, setStages] = useState<Stage[]>([]);
-  const [maxTravelMinutes, setMaxTravelMinutes] = useState(DEFAULT_TRAVEL_MINUTES);
+  const [maxTravelMinutes, setMaxTravelMinutes] = useState(
+    DEFAULT_TRAVEL_MINUTES,
+  );
   const [hydrated, setHydrated] = useState(false);
   const [showResult, setShowResult] = useState(false);
   const [overrides, setOverrides] = useState<StageOverrides>({});
   const [addSheetOpen, setAddSheetOpen] = useState(false);
-  const [designatedEditTarget, setDesignatedEditTarget] = useState<string | "new" | null>(null);
-  const [recentDesignated, setRecentDesignated] = useState<DesignatedPlace[]>([]);
+  const [designatedEditTarget, setDesignatedEditTarget] = useState<
+    string | "new" | null
+  >(null);
+  const [recentDesignated, setRecentDesignated] = useState<DesignatedPlace[]>(
+    [],
+  );
 
-  const [location, setLocation] = useState<{ lat: number; lng: number } | null>(null);
+  const [location, setLocation] = useState<{ lat: number; lng: number } | null>(
+    null,
+  );
   const [locationStatus, setLocationStatus] = useState<LocationStatus>("idle");
   const [navigating, setNavigating] = useState(false);
 
@@ -147,7 +190,10 @@ function CourseBuilder() {
     setLocationStatus("loading");
     navigator.geolocation.getCurrentPosition(
       (position) => {
-        setLocation({ lat: position.coords.latitude, lng: position.coords.longitude });
+        setLocation({
+          lat: position.coords.latitude,
+          lng: position.coords.longitude,
+        });
         setLocationStatus("granted");
       },
       () => setLocationStatus("denied"),
@@ -160,7 +206,10 @@ function CourseBuilder() {
     if (!navigating || !("geolocation" in navigator)) return;
     const watchId = navigator.geolocation.watchPosition(
       (position) => {
-        setLocation({ lat: position.coords.latitude, lng: position.coords.longitude });
+        setLocation({
+          lat: position.coords.latitude,
+          lng: position.coords.longitude,
+        });
         setLocationStatus("granted");
       },
       () => setLocationStatus("denied"),
@@ -193,7 +242,10 @@ function CourseBuilder() {
     [stages, maxTravelMinutes, overrides],
   );
 
-  function addRecommendStage(category: PlaceCategory, subCategory: string | undefined) {
+  function addRecommendStage(
+    category: PlaceCategory,
+    subCategory: string | undefined,
+  ) {
     setStages((prev) => [
       ...prev,
       { id: generateId("stage"), kind: "recommend", category, subCategory },
@@ -205,10 +257,15 @@ function CourseBuilder() {
     setStages((prev) => {
       if (designatedEditTarget && designatedEditTarget !== "new") {
         return prev.map((s) =>
-          s.id === designatedEditTarget && s.kind === "designated" ? { ...s, place } : s,
+          s.id === designatedEditTarget && s.kind === "designated"
+            ? { ...s, place }
+            : s,
         );
       }
-      return [...prev, { id: generateId("stage"), kind: "designated" as const, place }];
+      return [
+        ...prev,
+        { id: generateId("stage"), kind: "designated" as const, place },
+      ];
     });
     setRecentDesignated((prev) => {
       const deduped = prev.filter(
@@ -238,7 +295,9 @@ function CourseBuilder() {
 
   const editingPlace =
     designatedEditTarget && designatedEditTarget !== "new"
-      ? stages.find((s) => s.id === designatedEditTarget && s.kind === "designated")
+      ? stages.find(
+          (s) => s.id === designatedEditTarget && s.kind === "designated",
+        )
       : null;
 
   if (navigating) {
@@ -263,12 +322,17 @@ function CourseBuilder() {
           avatarPoint={avatarPoint}
           onBack={() => setShowResult(false)}
           onReplace={replaceRecommendStage}
-          onRequestChangeDesignated={(stageId) => setDesignatedEditTarget(stageId)}
+          onRequestChangeDesignated={(stageId) =>
+            setDesignatedEditTarget(stageId)
+          }
           onDecideRoute={() => setNavigating(true)}
         />
       ) : (
         <div className="flex h-screen w-full flex-col bg-white dark:bg-black">
-          <div style={{ flexGrow: AVATAR_FIXED_SHARE, flexBasis: 0 }} className="min-h-0">
+          <div
+            style={{ flexGrow: AVATAR_FIXED_SHARE, flexBasis: 0 }}
+            className="min-h-0"
+          >
             <AvatarScene status={locationStatus} />
           </div>
 
@@ -283,7 +347,9 @@ function CourseBuilder() {
               onOpenAddSheet={() => setAddSheetOpen(true)}
               onRemoveStage={removeStage}
               onReorderStages={setStages}
-              onRequestChangeDesignated={(stageId) => setDesignatedEditTarget(stageId)}
+              onRequestChangeDesignated={(stageId) =>
+                setDesignatedEditTarget(stageId)
+              }
               onMakeCourse={makeCourse}
             />
           </div>
@@ -301,7 +367,11 @@ function CourseBuilder() {
 
       {designatedEditTarget && (
         <DesignatedPlaceSheet
-          initial={editingPlace && editingPlace.kind === "designated" ? editingPlace.place : null}
+          initial={
+            editingPlace && editingPlace.kind === "designated"
+              ? editingPlace.place
+              : null
+          }
           recentPlaces={recentDesignated}
           onClose={() => setDesignatedEditTarget(null)}
           onSubmit={upsertDesignatedStage}
@@ -332,17 +402,23 @@ function InputView({
 }) {
   return (
     <div className="mx-auto flex h-full w-full max-w-md flex-col gap-6 overflow-y-auto bg-white px-4 py-6 dark:bg-black">
-      <h1 className="text-2xl font-bold text-black dark:text-white">코스 만들기</h1>
+      <h1 className="text-2xl font-bold text-black dark:text-white">
+        코스 만들기
+      </h1>
 
       <section className="flex flex-col gap-2">
-        <label className="text-sm font-medium text-zinc-600 dark:text-zinc-400">지역</label>
+        <label className="text-sm font-medium text-zinc-600 dark:text-zinc-400">
+          지역
+        </label>
         <div className="flex h-12 w-full items-center rounded-xl border border-zinc-300 bg-zinc-50 px-4 text-base text-black dark:border-zinc-700 dark:bg-zinc-900 dark:text-white">
           종로
         </div>
       </section>
 
       <section className="flex flex-col gap-3">
-        <label className="text-sm font-medium text-zinc-600 dark:text-zinc-400">일정 단계</label>
+        <label className="text-sm font-medium text-zinc-600 dark:text-zinc-400">
+          일정 단계
+        </label>
 
         {stages.length === 0 && (
           <p className="text-sm text-zinc-400 dark:text-zinc-500">
@@ -389,7 +465,9 @@ function InputView({
           className="flex items-center justify-between text-sm font-medium text-zinc-600 dark:text-zinc-400"
         >
           <span>최대 이동시간</span>
-          <span className="text-black dark:text-white">{maxTravelMinutes}분</span>
+          <span className="text-black dark:text-white">
+            {maxTravelMinutes}분
+          </span>
         </label>
         <input
           id="max-travel"
@@ -481,7 +559,9 @@ function StageRow({
 
       {stage.kind === "designated" && (
         <>
-          <span className="text-sm text-zinc-500 dark:text-zinc-400">{stage.place.address}</span>
+          <span className="text-sm text-zinc-500 dark:text-zinc-400">
+            {stage.place.address}
+          </span>
           <button
             type="button"
             onClick={() => onRequestChangeDesignated(stage.id)}
@@ -503,7 +583,10 @@ function AddStageSheet({
 }: {
   canAddMore: boolean;
   onClose: () => void;
-  onAddRecommend: (category: PlaceCategory, subCategory: string | undefined) => void;
+  onAddRecommend: (
+    category: PlaceCategory,
+    subCategory: string | undefined,
+  ) => void;
   onStartDesignated: () => void;
 }) {
   // 카테고리를 고르면, 세부 카테고리가 있는 항목(맛집·카페)만 한 번 더 고르고 나머지는 바로 추가한다.
@@ -563,7 +646,8 @@ function AddStageSheet({
                 장소 직접 지정
               </span>
               <span className="text-xs text-zinc-500 dark:text-zinc-400">
-                꼭 갈 곳, 출발하는 역, 끝나는 곳을 넣으면 나머지는 그 주변에서 추천해요
+                꼭 갈 곳, 출발하는 역, 끝나는 곳을 넣으면 나머지는 그 주변에서
+                추천해요
               </span>
             </button>
           </div>
@@ -741,7 +825,11 @@ function useResizableSplit(
   bodyRef: React.RefObject<HTMLDivElement | null>,
 ) {
   const [ratio, setRatio] = useState(defaultRatio);
-  const dragRef = useRef<{ startY: number; startRatio: number; height: number } | null>(null);
+  const dragRef = useRef<{
+    startY: number;
+    startRatio: number;
+    height: number;
+  } | null>(null);
 
   function onHandlePointerDown(e: React.PointerEvent) {
     e.currentTarget.setPointerCapture(e.pointerId);
@@ -756,7 +844,12 @@ function useResizableSplit(
     const drag = dragRef.current;
     if (!drag) return;
     const deltaRatio = -(e.clientY - drag.startY) / drag.height;
-    setRatio(Math.min(MAX_LIST_RATIO, Math.max(MIN_LIST_RATIO, drag.startRatio + deltaRatio)));
+    setRatio(
+      Math.min(
+        MAX_LIST_RATIO,
+        Math.max(MIN_LIST_RATIO, drag.startRatio + deltaRatio),
+      ),
+    );
   }
 
   function onHandlePointerUp() {
@@ -809,21 +902,33 @@ function ResultView({
   const [openStageId, setOpenStageId] = useState<string | null>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const split = useResizableSplit(DEFAULT_LIST_RATIO, bodyRef);
-  const openStageIndex = result.stages.findIndex((s) => s.stage.id === openStageId);
-  const openStageResult = openStageIndex === -1 ? null : result.stages[openStageIndex];
+  const openStageIndex = result.stages.findIndex(
+    (s) => s.stage.id === openStageId,
+  );
+  const openStageResult =
+    openStageIndex === -1 ? null : result.stages[openStageIndex];
   const nextSelected =
-    openStageIndex === -1 ? null : (result.stages[openStageIndex + 1]?.selected ?? null);
+    openStageIndex === -1
+      ? null
+      : (result.stages[openStageIndex + 1]?.selected ?? null);
   const decidedStages =
     openStageIndex === -1
       ? []
-      : result.stages.slice(0, openStageIndex).filter((s) => s.selected !== null);
+      : result.stages
+          .slice(0, openStageIndex)
+          .filter((s) => s.selected !== null);
 
   const failedIndex = result.stages.findIndex(
-    (s): s is RecommendStageResult => s.kind === "recommend" && s.selected === null,
+    (s): s is RecommendStageResult =>
+      s.kind === "recommend" && s.selected === null,
   );
-  const failedStage = failedIndex === -1 ? null : (result.stages[failedIndex] as RecommendStageResult);
+  const failedStage =
+    failedIndex === -1
+      ? null
+      : (result.stages[failedIndex] as RecommendStageResult);
   const blockingDesignated =
-    failedStage?.blockedByDesignated && result.stages[failedIndex + 1]?.kind === "designated"
+    failedStage?.blockedByDesignated &&
+    result.stages[failedIndex + 1]?.kind === "designated"
       ? result.stages[failedIndex + 1]
       : null;
 
@@ -838,7 +943,9 @@ function ResultView({
         >
           ←
         </button>
-        <h1 className="text-2xl font-bold text-black dark:text-white">추천 결과</h1>
+        <h1 className="text-2xl font-bold text-black dark:text-white">
+          추천 결과
+        </h1>
       </div>
 
       {!result.success ? (
@@ -849,8 +956,9 @@ function ResultView({
             </p>
             {blockingDesignated && blockingDesignated.kind === "designated" ? (
               <p className="text-sm text-zinc-500 dark:text-zinc-400">
-                &apos;{blockingDesignated.stage.place.name}&apos; 지정 장소 근처라서 그래요.
-                최대 이동시간을 늘리거나 지정 장소를 바꿔보세요.
+                &apos;{blockingDesignated.stage.place.name}&apos; 지정 장소
+                근처라서 그래요. 최대 이동시간을 늘리거나 지정 장소를
+                바꿔보세요.
               </p>
             ) : (
               <p className="text-sm text-zinc-500 dark:text-zinc-400">
@@ -888,20 +996,24 @@ function ResultView({
             <ul className="flex flex-col gap-3">
               {result.stages.map((stageResult, index) => (
                 <li key={stageResult.stage.id} className="flex flex-col gap-3">
-                  {index > 0 && stageResult.travelMinutesFromPrevious !== null && (
-                    <p
-                      className={`text-center text-sm ${
-                        stageResult.kind === "designated" && stageResult.travelExceedsMax
-                          ? "font-medium text-amber-600 dark:text-amber-400"
-                          : "text-zinc-400 dark:text-zinc-500"
-                      }`}
-                    >
-                      도보 약 {Math.round(stageResult.travelMinutesFromPrevious)}분
-                      {stageResult.kind === "designated" && stageResult.travelExceedsMax
-                        ? " · 설정보다 길어요"
-                        : ""}
-                    </p>
-                  )}
+                  {index > 0 &&
+                    stageResult.travelMinutesFromPrevious !== null && (
+                      <p
+                        className={`text-center text-sm ${
+                          stageResult.kind === "designated" &&
+                          stageResult.travelExceedsMax
+                            ? "font-medium text-amber-600 dark:text-amber-400"
+                            : "text-zinc-400 dark:text-zinc-500"
+                        }`}
+                      >
+                        도보 약{" "}
+                        {Math.round(stageResult.travelMinutesFromPrevious)}분
+                        {stageResult.kind === "designated" &&
+                        stageResult.travelExceedsMax
+                          ? " · 설정보다 길어요"
+                          : ""}
+                      </p>
+                    )}
 
                   {stageResult.kind === "recommend" && stageResult.selected && (
                     <div className="flex flex-col gap-2 rounded-xl border border-zinc-300 p-4 dark:border-zinc-700">
@@ -948,7 +1060,9 @@ function ResultView({
                         </div>
                         <button
                           type="button"
-                          onClick={() => onRequestChangeDesignated(stageResult.stage.id)}
+                          onClick={() =>
+                            onRequestChangeDesignated(stageResult.stage.id)
+                          }
                           className="h-9 shrink-0 rounded-lg border border-zinc-300 px-3 text-sm font-medium text-zinc-600 dark:border-zinc-700 dark:text-zinc-300"
                         >
                           변경
@@ -1028,11 +1142,17 @@ function computeMapBounds(points: MapPoint[]) {
   return { minLat, maxLat, minLng, maxLng };
 }
 
-function projectToMap(point: MapPoint, bounds: ReturnType<typeof computeMapBounds>) {
+function projectToMap(
+  point: MapPoint,
+  bounds: ReturnType<typeof computeMapBounds>,
+) {
   const drawable = MAP_VIEW_SIZE - MAP_MARGIN * 2;
-  const x = MAP_MARGIN + ((point.lng - bounds.minLng) / (bounds.maxLng - bounds.minLng)) * drawable;
+  const x =
+    MAP_MARGIN +
+    ((point.lng - bounds.minLng) / (bounds.maxLng - bounds.minLng)) * drawable;
   const y =
-    MAP_MARGIN + ((bounds.maxLat - point.lat) / (bounds.maxLat - bounds.minLat)) * drawable;
+    MAP_MARGIN +
+    ((bounds.maxLat - point.lat) / (bounds.maxLat - bounds.minLat)) * drawable;
   return { x, y };
 }
 
@@ -1055,12 +1175,19 @@ function useZoomPan() {
     scale: number;
     mid: { x: number; y: number };
   } | null>(null);
-  const panRef = useRef<{ x: number; y: number; translate: { x: number; y: number } } | null>(
-    null,
-  );
+  const panRef = useRef<{
+    x: number;
+    y: number;
+    translate: { x: number; y: number };
+  } | null>(null);
 
   const zoomAt = useCallback(
-    (point: { x: number; y: number }, s0: number, t0: { x: number; y: number }, nextScaleRaw: number) => {
+    (
+      point: { x: number; y: number },
+      s0: number,
+      t0: { x: number; y: number },
+      nextScaleRaw: number,
+    ) => {
       const s1 = clampZoomScale(nextScaleRaw);
       setScale(s1);
       setTranslate({
@@ -1090,7 +1217,12 @@ function useZoomPan() {
       const rect = el.getBoundingClientRect();
       const point = { x: e.clientX - rect.left, y: e.clientY - rect.top };
       const factor = Math.exp(-e.deltaY * 0.0015);
-      zoomAt(point, scaleRef.current, translateRef.current, scaleRef.current * factor);
+      zoomAt(
+        point,
+        scaleRef.current,
+        translateRef.current,
+        scaleRef.current * factor,
+      );
     };
     el.addEventListener("wheel", handleWheel, { passive: false });
     return () => el.removeEventListener("wheel", handleWheel);
@@ -1122,7 +1254,12 @@ function useZoomPan() {
       const [a, b] = [...pointers.current.values()];
       const distance = Math.hypot(a.x - b.x, a.y - b.y);
       const pinch = pinchRef.current;
-      zoomAt(pinch.mid, pinch.scale, translate, pinch.scale * (distance / pinch.distance));
+      zoomAt(
+        pinch.mid,
+        pinch.scale,
+        translate,
+        pinch.scale * (distance / pinch.distance),
+      );
     } else if (pointers.current.size === 1 && panRef.current && scale > 1) {
       setTranslate({
         x: panRef.current.translate.x + (e.clientX - panRef.current.x),
@@ -1186,16 +1323,22 @@ function ReplaceSheet({
   onClose: () => void;
   onSelect: (placeId: string) => void;
 }) {
-  const [previewId, setPreviewId] = useState<string | null>(stageResult.selected?.id ?? null);
+  const [previewId, setPreviewId] = useState<string | null>(
+    stageResult.selected?.id ?? null,
+  );
   const bodyRef = useRef<HTMLDivElement>(null);
   const split = useResizableSplit(DEFAULT_LIST_RATIO, bodyRef);
 
-  const previewCandidate = stageResult.candidates.find((c) => c.place.id === previewId);
+  const previewCandidate = stageResult.candidates.find(
+    (c) => c.place.id === previewId,
+  );
 
   return (
     <div className="fixed inset-0 z-20 flex flex-col bg-white dark:bg-black">
       <div className="flex shrink-0 items-center justify-between p-4">
-        <h2 className="text-lg font-bold text-black dark:text-white">다른 장소로 교체</h2>
+        <h2 className="text-lg font-bold text-black dark:text-white">
+          다른 장소로 교체
+        </h2>
         <button
           type="button"
           onClick={onClose}
@@ -1261,7 +1404,9 @@ function ReplaceSheet({
                     <span className="text-sm text-zinc-500 dark:text-zinc-400">
                       {candidate.travelMinutesFromPrevious !== null &&
                         `이전 장소까지 도보 약 ${Math.round(candidate.travelMinutesFromPrevious)}분`}
-                      {candidate.travelMinutesFromPrevious !== null && nextMinutes !== null && " · "}
+                      {candidate.travelMinutesFromPrevious !== null &&
+                        nextMinutes !== null &&
+                        " · "}
                       {nextMinutes !== null &&
                         `다음 장소까지 도보 약 ${Math.round(nextMinutes)}분`}
                     </span>
@@ -1309,13 +1454,27 @@ function StubMap({
 
   const decidedPoints: MapPoint[] = decidedStages
     .filter((s) => s.selected !== null)
-    .map((s) => ({ lat: s.selected!.lat, lng: s.selected!.lng, name: s.selected!.name }));
+    .map((s) => ({
+      lat: s.selected!.lat,
+      lng: s.selected!.lng,
+      name: s.selected!.name,
+    }));
 
   const allPoints: MapPoint[] = [
     ...decidedPoints,
-    ...candidates.map((c) => ({ lat: c.place.lat, lng: c.place.lng, name: c.place.name })),
+    ...candidates.map((c) => ({
+      lat: c.place.lat,
+      lng: c.place.lng,
+      name: c.place.name,
+    })),
     ...(nextSelected
-      ? [{ lat: nextSelected.lat, lng: nextSelected.lng, name: nextSelected.name }]
+      ? [
+          {
+            lat: nextSelected.lat,
+            lng: nextSelected.lng,
+            name: nextSelected.name,
+          },
+        ]
       : []),
   ];
 
@@ -1330,9 +1489,14 @@ function StubMap({
   const bounds = computeMapBounds(allPoints);
   const decidedProjected = decidedPoints.map((p) => projectToMap(p, bounds));
   const lastDecided = decidedProjected[decidedProjected.length - 1] ?? null;
-  const previewPoint = candidates.find((c) => c.place.id === previewPlaceId) ?? null;
-  const previewProjected = previewPoint ? projectToMap(previewPoint.place, bounds) : null;
-  const nextProjected = nextSelected ? projectToMap(nextSelected, bounds) : null;
+  const previewPoint =
+    candidates.find((c) => c.place.id === previewPlaceId) ?? null;
+  const previewProjected = previewPoint
+    ? projectToMap(previewPoint.place, bounds)
+    : null;
+  const nextProjected = nextSelected
+    ? projectToMap(nextSelected, bounds)
+    : null;
 
   return (
     <div className="relative h-full w-full overflow-hidden bg-zinc-100 dark:bg-zinc-900">
@@ -1386,7 +1550,12 @@ function StubMap({
           const p = decidedProjected[i];
           return (
             <g key={`decided-${i}`}>
-              <circle cx={p.x} cy={p.y} r={10} className="fill-zinc-500 dark:fill-zinc-400" />
+              <circle
+                cx={p.x}
+                cy={p.y}
+                r={10}
+                className="fill-zinc-500 dark:fill-zinc-400"
+              />
               <text
                 x={p.x}
                 y={p.y + 4}
@@ -1473,7 +1642,11 @@ function RouteMap({
 
   const points: MapPoint[] = stages
     .filter((s) => s.selected !== null)
-    .map((s) => ({ lat: s.selected!.lat, lng: s.selected!.lng, name: s.selected!.name }));
+    .map((s) => ({
+      lat: s.selected!.lat,
+      lng: s.selected!.lng,
+      name: s.selected!.name,
+    }));
 
   if (points.length === 0) {
     return (
@@ -1486,9 +1659,13 @@ function RouteMap({
   const avatarMapPoint: MapPoint | null = avatarPoint
     ? { ...avatarPoint, name: "나" }
     : null;
-  const bounds = computeMapBounds(avatarMapPoint ? [...points, avatarMapPoint] : points);
+  const bounds = computeMapBounds(
+    avatarMapPoint ? [...points, avatarMapPoint] : points,
+  );
   const projected = points.map((p) => projectToMap(p, bounds));
-  const avatarProjected = avatarMapPoint ? projectToMap(avatarMapPoint, bounds) : null;
+  const avatarProjected = avatarMapPoint
+    ? projectToMap(avatarMapPoint, bounds)
+    : null;
 
   return (
     <div className="relative h-full w-full overflow-hidden bg-zinc-100 dark:bg-zinc-900">
@@ -1547,7 +1724,12 @@ function RouteMap({
               className="fill-blue-500/10 stroke-blue-400/40"
               strokeWidth={2}
             />
-            <text x={avatarProjected.x} y={avatarProjected.y + 7} textAnchor="middle" fontSize={20}>
+            <text
+              x={avatarProjected.x}
+              y={avatarProjected.y + 7}
+              textAnchor="middle"
+              fontSize={20}
+            >
               🧍
             </text>
           </g>
@@ -1614,7 +1796,9 @@ function LoginScreen({ onLogin }: { onLogin: () => void }) {
   return (
     <div className="flex h-screen w-full flex-col items-center justify-center gap-10 bg-white px-6 dark:bg-black">
       <div className="flex flex-col items-center gap-2 text-center">
-        <h1 className="text-3xl font-bold text-black dark:text-white">코스 추천</h1>
+        <h1 className="text-3xl font-bold text-black dark:text-white">
+          코스 추천
+        </h1>
         <p className="text-sm text-zinc-500 dark:text-zinc-400">
           지역과 일정 순서를 정하면 평점과 동선을 고려해 코스를 이어드려요
         </p>
@@ -1638,7 +1822,8 @@ function LoginScreen({ onLogin }: { onLogin: () => void }) {
       </div>
 
       <p className="max-w-xs text-center text-xs text-zinc-400 dark:text-zinc-500">
-        로그인 기능은 아직 준비 중이에요. 버튼을 누르면 체험용으로 바로 시작돼요.
+        로그인 기능은 아직 준비 중이에요. 버튼을 누르면 체험용으로 바로
+        시작돼요.
       </p>
     </div>
   );
@@ -1646,6 +1831,8 @@ function LoginScreen({ onLogin }: { onLogin: () => void }) {
 
 /** 아직 지도 없이, 여행을 기다리며 앉아있는 내 아바타를 보여주는 임시 장면. */
 function AvatarScene({ status }: { status: LocationStatus }) {
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [friendsOpen, setFriendsOpen] = useState(false);
   const statusText =
     status === "loading"
       ? "내 위치 확인하는 중..."
@@ -1657,10 +1844,16 @@ function AvatarScene({ status }: { status: LocationStatus }) {
 
   return (
     <div className="relative h-full w-full overflow-hidden bg-gradient-to-b from-sky-300 via-sky-200 to-amber-100 dark:from-slate-800 dark:via-slate-700 dark:to-amber-950">
-      <span className="absolute left-[12%] top-[14%] text-3xl opacity-80">☁️</span>
-      <span className="absolute left-[60%] top-[8%] text-2xl opacity-70">☁️</span>
+      <span className="absolute left-[12%] top-[14%] text-3xl opacity-80">
+        ☁️
+      </span>
+      <span className="absolute left-[60%] top-[8%] text-2xl opacity-70">
+        ☁️
+      </span>
 
-      <span className="absolute bottom-[32%] left-[4%] text-6xl drop-shadow">🌴</span>
+      <span className="absolute bottom-[32%] left-[4%] text-6xl drop-shadow">
+        🌴
+      </span>
 
       <div className="absolute inset-x-0 bottom-0 h-[38%] bg-gradient-to-b from-amber-100 to-amber-200 dark:from-amber-900 dark:to-amber-950" />
       <div className="absolute inset-x-0 bottom-0 h-[8%] bg-sky-200/70 dark:bg-sky-900/50" />
@@ -1682,7 +1875,16 @@ function AvatarScene({ status }: { status: LocationStatus }) {
       <div className="absolute right-2 top-2 flex gap-1.5">
         <button
           type="button"
+          aria-label="친구 추가"
+          onClick={() => setFriendsOpen(true)}
+          className="flex h-8 w-8 items-center justify-center rounded-full bg-white/80 text-sm shadow-sm dark:bg-black/40"
+        >
+          👤
+        </button>
+        <button
+          type="button"
           aria-label="설정"
+          onClick={() => setSettingsOpen(true)}
           className="flex h-8 w-8 items-center justify-center rounded-full bg-white/80 text-sm shadow-sm dark:bg-black/40"
         >
           ⚙️
@@ -1702,6 +1904,338 @@ function AvatarScene({ status }: { status: LocationStatus }) {
       >
         👥 그룹
       </button>
+
+      {settingsOpen && <SettingsSheet onClose={() => setSettingsOpen(false)} />}
+      {friendsOpen && <FriendsSheet onClose={() => setFriendsOpen(false)} />}
+    </div>
+  );
+}
+
+/** 이 기기에서 처음 한 번 만들어 localStorage에 저장해두는 개인 코드. 서버·로그인이 없어서 기기마다 다르다. */
+function loadOrCreatePersonalCode(): string {
+  try {
+    const saved = window.localStorage.getItem(PERSONAL_CODE_STORAGE_KEY);
+    if (saved) return saved;
+  } catch {
+    // 저장소를 못 읽어도 아래에서 새로 만든다.
+  }
+  const bytes = new Uint8Array(PERSONAL_CODE_LENGTH);
+  window.crypto.getRandomValues(bytes);
+  const code = Array.from(
+    bytes,
+    (b) => PERSONAL_CODE_CHARS[b % PERSONAL_CODE_CHARS.length],
+  ).join("");
+  try {
+    window.localStorage.setItem(PERSONAL_CODE_STORAGE_KEY, code);
+  } catch {
+    // 저장에 실패하면 이번 화면에서만 쓰이는 코드가 된다.
+  }
+  return code;
+}
+
+function loadCodeList(key: string): string[] {
+  try {
+    const raw = window.localStorage.getItem(key);
+    const parsed: unknown = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed)
+      ? parsed.filter((c): c is string => typeof c === "string")
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveCodeList(key: string, codes: string[]) {
+  try {
+    window.localStorage.setItem(key, JSON.stringify(codes));
+  } catch {
+    // 저장에 실패해도 이번 화면에서는 목록이 보인다.
+  }
+}
+
+function FriendsSheet({ onClose }: { onClose: () => void }) {
+  const [view, setView] = useState<"main" | "requests">("main");
+  const [requests, setRequests] = useState<string[]>([]);
+  const [friends, setFriends] = useState<string[]>([]);
+  const [myCode, setMyCode] = useState("");
+  const [input, setInput] = useState("");
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    // localStorage는 브라우저에서만 읽을 수 있어 마운트 후에 한 번 불러온다.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setFriends(loadCodeList(FRIENDS_STORAGE_KEY));
+    setRequests(loadCodeList(FRIEND_REQUESTS_STORAGE_KEY));
+    setMyCode(loadOrCreatePersonalCode());
+  }, []);
+
+  function save(next: string[]) {
+    setFriends(next);
+    saveCodeList(FRIENDS_STORAGE_KEY, next);
+  }
+
+  function saveRequests(next: string[]) {
+    setRequests(next);
+    saveCodeList(FRIEND_REQUESTS_STORAGE_KEY, next);
+  }
+
+  function accept(code: string) {
+    if (!friends.includes(code)) save([...friends, code]);
+    saveRequests(requests.filter((c) => c !== code));
+  }
+
+  function reject(code: string) {
+    saveRequests(requests.filter((c) => c !== code));
+  }
+
+  // 서버가 없어 진짜 요청은 올 수 없으므로, 요청 화면을 눌러볼 수 있게 임시 요청을 하나 만든다.
+  function receiveSampleRequest() {
+    const taken = new Set([...friends, ...requests, myCode]);
+    for (let i = 0; i < 20; i++) {
+      const code = Array.from(
+        { length: PERSONAL_CODE_LENGTH },
+        () =>
+          PERSONAL_CODE_CHARS[
+            Math.floor(Math.random() * PERSONAL_CODE_CHARS.length)
+          ],
+      ).join("");
+      if (!taken.has(code)) {
+        saveRequests([...requests, code]);
+        return;
+      }
+    }
+  }
+
+  function add() {
+    const code = input.trim().toUpperCase();
+    if (code.length !== PERSONAL_CODE_LENGTH) {
+      setError(`개인 코드는 ${PERSONAL_CODE_LENGTH}자리예요.`);
+    } else if ([...code].some((ch) => !PERSONAL_CODE_CHARS.includes(ch))) {
+      setError(
+        "코드에 쓸 수 없는 글자가 있어요. 영문 대문자와 숫자만 입력해주세요.",
+      );
+    } else if (code === myCode) {
+      setError("내 코드는 추가할 수 없어요.");
+    } else if (friends.includes(code)) {
+      setError("이미 추가된 친구예요.");
+    } else {
+      save([...friends, code]);
+      setInput("");
+      setError("");
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-30 flex items-end justify-center bg-black/50 pb-16">
+      <div className="mx-2 flex max-h-[70vh] w-full max-w-md flex-col gap-4 overflow-y-auto rounded-2xl bg-white p-4 dark:bg-zinc-900">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-bold text-black dark:text-white">
+            {view === "main" ? "친구 추가하기" : "친구 요청"}
+          </h2>
+          <button
+            type="button"
+            onClick={view === "main" ? onClose : () => setView("main")}
+            aria-label="닫기"
+            className="flex h-9 w-9 items-center justify-center rounded-lg border border-zinc-300 dark:border-zinc-700 dark:text-white"
+          >
+            {view === "main" ? "✕" : "←"}
+          </button>
+        </div>
+
+        {view === "requests" && (
+          <div className="flex flex-col gap-2">
+            {requests.length === 0 ? (
+              <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                받은 친구 요청이 없어요.
+              </p>
+            ) : (
+              <ul className="flex flex-col gap-2">
+                {requests.map((code) => (
+                  <li
+                    key={code}
+                    className="flex flex-col gap-2 rounded-lg border border-zinc-300 p-3 dark:border-zinc-700"
+                  >
+                    <span className="text-base font-semibold tracking-widest text-black dark:text-white">
+                      🧑 {code}
+                    </span>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => accept(code)}
+                        className="h-11 flex-1 rounded-lg bg-black text-sm font-semibold text-white dark:bg-white dark:text-black"
+                      >
+                        수락
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => reject(code)}
+                        className="h-11 flex-1 rounded-lg border border-zinc-300 text-sm font-medium text-black dark:border-zinc-700 dark:text-white"
+                      >
+                        거절
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+
+        {view === "main" && (
+          <div className="flex flex-col gap-2">
+            <div className="flex gap-2">
+              <input
+                value={input}
+                onChange={(e) => {
+                  setInput(e.target.value);
+                  setError("");
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") add();
+                }}
+                maxLength={PERSONAL_CODE_LENGTH}
+                placeholder="친구의 개인 코드"
+                autoCapitalize="characters"
+                className="h-12 min-w-0 flex-1 rounded-lg border border-zinc-300 bg-white px-3 text-base uppercase tracking-widest text-black dark:border-zinc-700 dark:bg-zinc-900 dark:text-white"
+              />
+              <button
+                type="button"
+                onClick={add}
+                className="h-12 rounded-lg bg-black px-4 text-sm font-semibold text-white dark:bg-white dark:text-black"
+              >
+                추가
+              </button>
+            </div>
+            {error && <p className="text-xs text-red-500">{error}</p>}
+          </div>
+        )}
+
+        {view === "main" && (
+          <div className="flex flex-col gap-1">
+            <button
+              type="button"
+              onClick={() => setView("requests")}
+              className="flex h-12 w-full items-center justify-between rounded-lg border border-zinc-300 px-3 text-base text-black dark:border-zinc-700 dark:text-white"
+            >
+              <span>친구 요청</span>
+              <span className="flex items-center gap-2">
+                {requests.length > 0 && (
+                  <span className="flex h-6 min-w-6 items-center justify-center rounded-full bg-red-500 px-1.5 text-xs font-bold text-white">
+                    {requests.length}
+                  </span>
+                )}
+                <span aria-hidden>›</span>
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={receiveSampleRequest}
+              className="h-9 self-start px-1 text-xs text-zinc-400 underline dark:text-zinc-500"
+            >
+              체험용: 친구 요청 하나 받아보기
+            </button>
+          </div>
+        )}
+
+        {view === "main" && (
+          <div className="flex flex-col gap-2">
+            <span className="text-sm font-medium text-zinc-600 dark:text-zinc-400">
+              친구 목록 {friends.length > 0 && `(${friends.length})`}
+            </span>
+            {friends.length === 0 ? (
+              <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                아직 친구가 없어요. 친구의 개인 코드를 입력해 추가해보세요.
+              </p>
+            ) : (
+              <ul className="flex flex-col gap-2">
+                {friends.map((code) => (
+                  <li
+                    key={code}
+                    className="flex items-center justify-between rounded-lg border border-zinc-300 px-3 py-2 dark:border-zinc-700"
+                  >
+                    <span className="text-base font-semibold tracking-widest text-black dark:text-white">
+                      🧑 {code}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => save(friends.filter((c) => c !== code))}
+                      aria-label={`${code} 삭제`}
+                      className="flex h-9 w-9 items-center justify-center rounded-lg border border-zinc-300 text-red-500 dark:border-zinc-700"
+                    >
+                      ✕
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function SettingsSheet({ onClose }: { onClose: () => void }) {
+  const [code, setCode] = useState("");
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    // localStorage는 브라우저에서만 읽을 수 있어 마운트 후에 한 번 불러온다.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setCode(loadOrCreatePersonalCode());
+  }, []);
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(code);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // 복사 권한이 없으면 코드를 눈으로 보고 옮길 수 있게 그대로 둔다.
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-30 flex items-end justify-center bg-black/50 pb-16">
+      <div className="mx-2 flex w-full max-w-md flex-col gap-4 rounded-2xl bg-white p-4 dark:bg-zinc-900">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-bold text-black dark:text-white">설정</h2>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="닫기"
+            className="flex h-9 w-9 items-center justify-center rounded-lg border border-zinc-300 dark:border-zinc-700 dark:text-white"
+          >
+            ✕
+          </button>
+        </div>
+
+        <div className="flex flex-col gap-2">
+          <span className="text-sm font-medium text-zinc-600 dark:text-zinc-400">
+            개인 코드
+          </span>
+          <div className="flex items-center gap-2">
+            <div
+              aria-label="개인 코드"
+              className="flex h-12 flex-1 items-center justify-center rounded-lg border border-zinc-300 text-xl font-bold tracking-[0.3em] text-black dark:border-zinc-700 dark:text-white"
+            >
+              {code}
+            </div>
+            <button
+              type="button"
+              onClick={copy}
+              disabled={!code}
+              className="h-12 rounded-lg bg-black px-4 text-sm font-semibold text-white disabled:opacity-40 dark:bg-white dark:text-black"
+            >
+              {copied ? "복사됨" : "복사"}
+            </button>
+          </div>
+          <p className="text-xs text-zinc-500 dark:text-zinc-400">
+            이 기기에서 만들어진 나만의 코드예요. 나중에 그룹에 참여할 때 쓸 수
+            있어요.
+          </p>
+        </div>
+      </div>
     </div>
   );
 }
