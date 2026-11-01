@@ -38,7 +38,27 @@ const RECENT_DESIGNATED_STORAGE_KEY = "course-app:recent-designated";
 
 let nextId = 1;
 function generateId(prefix: string) {
-  return `${prefix}-${nextId++}`;
+  // localStorage에 저장된 이전 세션의 id와 겹치지 않도록, 페이지가 새로 열릴 때마다
+  // 초기화되는 카운터 대신 브라우저가 제공하는 무작위 값을 사용한다.
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return `${prefix}-${crypto.randomUUID()}`;
+  }
+  return `${prefix}-${Date.now()}-${nextId++}`;
+}
+
+function dedupeStageIds(stages: Stage[]): Stage[] {
+  // 과거 버전의 id 생성 방식 때문에 localStorage에 이미 중복된 id로 저장된
+  // 일정이 있을 수 있어, 불러올 때 중복분만 새 id로 바꿔준다.
+  const seen = new Set<string>();
+  return stages.map((stage) => {
+    if (!seen.has(stage.id)) {
+      seen.add(stage.id);
+      return stage;
+    }
+    const id = generateId("stage");
+    seen.add(id);
+    return { ...stage, id };
+  });
 }
 
 function loadLastInput(): { stages: Stage[]; maxTravelMinutes: number } | null {
@@ -150,7 +170,7 @@ function CourseBuilder() {
     // 여기서 한 번만 읽어 상태에 반영한다.
     const last = loadLastInput();
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setStages(last ? last.stages : []);
+    setStages(last ? dedupeStageIds(last.stages) : []);
     setMaxTravelMinutes(last ? last.maxTravelMinutes : DEFAULT_TRAVEL_MINUTES);
     setRecentDesignated(loadRecentDesignated());
     setHydrated(true);
