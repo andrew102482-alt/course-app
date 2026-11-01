@@ -31,7 +31,7 @@ const DEFAULT_TRAVEL_MINUTES = 15;
 const MAX_STAGES = 8;
 const MAX_RECENT_DESIGNATED = 10;
 /** 아바타 영역이 차지하는 화면 비율(나머지는 코스 만들기 패널). 드래그로 바꿀 수 없는 고정값. */
-const AVATAR_FIXED_SHARE = 0.22;
+const AVATAR_FIXED_SHARE = 0.4;
 
 const LAST_INPUT_STORAGE_KEY = "course-app:last-input";
 const RECENT_DESIGNATED_STORAGE_KEY = "course-app:recent-designated";
