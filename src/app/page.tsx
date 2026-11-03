@@ -12,7 +12,7 @@ import {
   REGION_CENTER,
   buildCourse,
   isWithinRegionRange,
-  naverMapLinkFor,
+  kakaoMapLinkFor,
   walkingMinutesBetween,
   type CourseResult,
   type DesignatedPlace,
@@ -905,7 +905,7 @@ function DesignatedPlaceSheet({
         </div>
 
         <p className="text-xs text-zinc-500 dark:text-zinc-400">
-          네이버 장소 검색 키 발급 전까지는 직접 입력으로 지정해요. 이름·주소와,
+          카카오 장소 검색 키 발급 전까지는 직접 입력으로 지정해요. 이름·주소와,
           대략의 위도·경도(종로 일대는 위도 37.57~37.58, 경도 126.975~126.992)를
           넣어주세요.
         </p>
@@ -1258,12 +1258,12 @@ function ResultView({
                         {stageResult.selected.address}
                       </span>
                       <a
-                        href={naverMapLinkFor(stageResult.selected)}
+                        href={kakaoMapLinkFor(stageResult.selected)}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="text-sm font-medium text-blue-600 dark:text-blue-400"
                       >
-                        네이버맵에서 보기
+                        카카오맵에서 보기
                       </a>
                       <span className="text-sm text-zinc-500 dark:text-zinc-500">
                         🕒 운영 시간 정보 없음
@@ -1869,7 +1869,7 @@ function StubMap({
       {zoomPan.isZoomed && <ZoomResetButton onClick={zoomPan.reset} />}
 
       <p className="pointer-events-none absolute bottom-1 right-2 text-[10px] text-zinc-400 dark:text-zinc-500">
-        지도 임시 표시 · 네이버맵 연동 전
+        지도 임시 표시 · 카카오맵 연동 전
       </p>
     </div>
   );
@@ -1992,7 +1992,7 @@ function RouteMap({
       {zoomPan.isZoomed && <ZoomResetButton onClick={zoomPan.reset} />}
 
       <p className="pointer-events-none absolute bottom-1 right-2 text-[10px] text-zinc-400 dark:text-zinc-500">
-        지도 임시 표시 · 네이버맵 연동 전
+        지도 임시 표시 · 카카오맵 연동 전
       </p>
     </div>
   );

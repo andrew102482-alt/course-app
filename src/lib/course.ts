@@ -102,8 +102,8 @@ export function isWithinRegionRange(point: LatLng): boolean {
   return straightLineDistanceMeters(point, REGION_CENTER) <= REGION_RADIUS_METERS;
 }
 
-export function naverMapLinkFor(place: DesignatedPlace): string {
-  return `https://map.naver.com/p/search/${encodeURIComponent(place.name)}?c=${place.lng},${place.lat},15,0,0,0,dh`;
+export function kakaoMapLinkFor(place: DesignatedPlace): string {
+  return `https://map.kakao.com/link/to/${encodeURIComponent(place.name)},${place.lat},${place.lng}`;
 }
 
 function reviewBonus(reviewCount: number): number {
