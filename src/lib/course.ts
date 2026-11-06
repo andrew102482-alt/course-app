@@ -45,10 +45,6 @@ export type RecommendStageResult = {
   blockedByDesignated: boolean;
   /** 일정 날짜가 정기 휴무 요일이라 후보에서 자동으로 빠진 장소 수. */
   closedExcludedCount: number;
-  /** 도착 예정 시각이 운영 시간 밖이라 후보에서 빠진 장소 수(만나는 시간을 정했을 때만). */
-  hoursExcludedCount: number;
-  /** 이 단계 장소에 도착할 예정 시각(분, 0=자정, 24시간 넘으면 다음날). 만나는 시간이 없으면 null. */
-  arrivalMinutes: number | null;
 };
 
 export type DesignatedStageResult = {
@@ -58,8 +54,6 @@ export type DesignatedStageResult = {
   travelMinutesFromPrevious: number | null;
   /** 바로 앞 단계도 지정 장소이고, 그 구간이 최대 이동시간을 넘는 경우(코스는 그대로 만들고 경고만). */
   travelExceedsMax: boolean;
-  /** 도착 예정 시각(분). 만나는 시간이 없으면 null. */
-  arrivalMinutes: number | null;
 };
 
 export type StageResult = RecommendStageResult | DesignatedStageResult;
@@ -68,14 +62,7 @@ export type CourseResult = {
   stages: StageResult[];
   totalTravelMinutes: number;
   success: boolean;
-  /** 마지막 장소에서 머무는 시간까지 더한 예상 종료 시각(분). 만나는 시간이 없으면 null. */
-  estimatedEndMinutes: number | null;
-  /** 예상 종료 시각이 헤어지는 시간보다 늦으면 true. */
-  exceedsEndTime: boolean;
 };
-
-/** 만나는/헤어지는 시간(시 단위, 0~35. 24 이상은 다음날). 정하지 않으면 null. */
-export type TimeWindow = { startHour: number | null; endHour: number | null };
 
 /** stage.id → 사용자가 직접 고른 장소 id. 추천 단계에서 자동 추천 대신 이 장소를 선택한다. */
 export type StageOverrides = Record<string, string>;
@@ -86,36 +73,6 @@ const DETOUR_FACTOR = 1.3;
 const REVIEW_BONUS_WEIGHT = 0.5;
 const REVIEW_BONUS_REFERENCE_COUNT = 2000;
 const PROXIMITY_BONUS_WEIGHT = 0.5;
-
-/** 장소에 머무는 시간(분) 가정. 시간대 계산용 임시 기준값. */
-const STAY_MINUTES: Record<string, number> = {
-  "문화 생활": 90,
-  액티비티: 90,
-  맛집: 60,
-  카페: 60,
-  술집: 90,
-  쇼핑: 60,
-};
-const DEFAULT_STAY_MINUTES = 60;
-/** 마감 직전 도착을 막기 위해, 도착 후 최소 이만큼은 영업 중이어야 한다. */
-const MIN_OPEN_AFTER_ARRIVAL = 30;
-
-export function stayMinutesFor(category: string): number {
-  return STAY_MINUTES[category] ?? DEFAULT_STAY_MINUTES;
-}
-
-function clockToMinutes(hhmm: string): number {
-  const [h, m] = hhmm.split(":").map(Number);
-  return h * 60 + (m || 0);
-}
-
-/** 도착 시각(분)에 영업 중인지. 마감이 자정을 넘기는 곳(마감 ≤ 시작)은 다음날로 계산한다. */
-export function isOpenAt(place: Place, arrivalMinutes: number): boolean {
-  const open = clockToMinutes(place.openTime);
-  let close = clockToMinutes(place.closeTime);
-  if (close <= open) close += 24 * 60;
-  return arrivalMinutes >= open && arrivalMinutes + MIN_OPEN_AFTER_ARRIVAL <= close;
-}
 
 /** 1차 추천 데이터 범위(종로 일대) 중심과 반경. 지정 장소가 이 범위 밖인지 확인할 때 쓴다. */
 export const REGION_CENTER = { lat: 37.5759, lng: 126.9825 };
@@ -228,9 +185,6 @@ function scoreCandidate(
  * - `overrides`로 특정 추천 단계에 사용자가 고른 장소를 강제로 선택할 수 있다.
  * - 이미 선택된(추천) 장소는 다음 추천 단계 후보에서 제외한다.
  * - `planDate`(일정 날짜)가 정기 휴무 요일인 장소는 후보에서 자동으로 제외한다.
- * - `time.startHour`(만나는 시간)가 있으면 시계를 돌려, 도착 예정 시각에 영업 중이지
- *   않은 후보를 제외한다. `time.endHour`(헤어지는 시간)는 예상 종료 시각이 넘는지
- *   경고에만 쓴다(코스는 그대로 만든다).
  */
 export function buildCourse(
   stages: Stage[],
@@ -238,13 +192,10 @@ export function buildCourse(
   maxTravelMinutes: number,
   overrides: StageOverrides = {},
   planDate?: string,
-  time: TimeWindow = { startHour: null, endHour: null },
 ): CourseResult {
   const usedPlaceIds = new Set<string>();
   let previous: LatLng | null = null;
   const stageResults: StageResult[] = [];
-  // 시계: 만나는 시간을 정했을 때만 단계별 도착·영업 여부를 계산한다.
-  let clock: number | null = time.startHour === null ? null : time.startHour * 60;
 
   for (let i = 0; i < stages.length; i++) {
     const stage = stages[i];
@@ -259,17 +210,12 @@ export function buildCourse(
         travelMinutesFromPrevious !== null &&
         travelMinutesFromPrevious > maxTravelMinutes;
 
-      if (clock !== null) clock += travelMinutesFromPrevious ?? 0;
-      const arrivalMinutes = clock === null ? null : Math.round(clock);
-      if (clock !== null) clock += DEFAULT_STAY_MINUTES;
-
       stageResults.push({
         kind: "designated",
         stage,
         selected: stage.place,
         travelMinutesFromPrevious,
         travelExceedsMax,
-        arrivalMinutes,
       });
 
       previous = stage.place;
@@ -283,19 +229,8 @@ export function buildCourse(
     const matching = places.filter(
       (place) => matchesStage(place, stage) && !usedPlaceIds.has(place.id),
     );
-    const openByDay = matching.filter((place) => !isClosedOn(place, planDate));
-    const closedExcludedCount = matching.length - openByDay.length;
-
-    // 만나는 시간을 정했다면, 이 후보까지 걸어서 도착할 시각에 영업 중인 곳만 남긴다.
-    const arrivalAt = (place: Place): number | null =>
-      clock === null
-        ? null
-        : clock + (previous ? walkingMinutesBetween(previous, place) : 0);
-    const pool = openByDay.filter((place) => {
-      const arrival = arrivalAt(place);
-      return arrival === null || isOpenAt(place, arrival);
-    });
-    const hoursExcludedCount = openByDay.length - pool.length;
+    const pool = matching.filter((place) => !isClosedOn(place, planDate));
+    const closedExcludedCount = matching.length - pool.length;
 
     const candidates = pool
       .map((place) => scoreCandidate(place, previous, nextDesignated, maxTravelMinutes))
@@ -326,14 +261,9 @@ export function buildCourse(
       candidates,
       blockedByDesignated,
       closedExcludedCount,
-      hoursExcludedCount,
-      arrivalMinutes: selected && clock !== null ? Math.round(arrivalAt(selected) ?? clock) : null,
     });
 
     if (selected) {
-      if (clock !== null) {
-        clock = (arrivalAt(selected) ?? clock) + stayMinutesFor(selected.category);
-      }
       usedPlaceIds.add(selected.id);
       previous = selected;
     }
@@ -348,17 +278,5 @@ export function buildCourse(
 
   const success = stageResults.every((result) => result.selected !== null);
 
-  const estimatedEndMinutes = clock === null ? null : Math.round(clock);
-  const exceedsEndTime =
-    estimatedEndMinutes !== null &&
-    time.endHour !== null &&
-    estimatedEndMinutes > time.endHour * 60;
-
-  return {
-    stages: stageResults,
-    totalTravelMinutes,
-    success,
-    estimatedEndMinutes,
-    exceedsEndTime,
-  };
+  return { stages: stageResults, totalTravelMinutes, success };
 }

@@ -3,7 +3,6 @@ import { test } from "node:test";
 import {
   buildCourse,
   isClosedOn,
-  isOpenAt,
   isWithinRegionRange,
   straightLineDistanceMeters,
   walkingMinutesBetween,
@@ -287,61 +286,4 @@ test("예시 데이터는 모두 운영 시간과 휴무 요일 정보를 갖고
     assert.ok(p.openTime < p.closeTime, `${p.name} 운영 시간 순서`);
     assert.ok(p.closedDays.every((d) => d >= 0 && d <= 6), `${p.name} closedDays`);
   }
-});
-
-test("isOpenAt: 도착 시각이 영업 시간 안이고 마감 30분 전까지만 true", () => {
-  const p = place({ id: "p", openTime: "10:00", closeTime: "21:00" });
-  assert.equal(isOpenAt(p, 9 * 60), false);
-  assert.equal(isOpenAt(p, 10 * 60), true);
-  assert.equal(isOpenAt(p, 20 * 60 + 30), true);
-  assert.equal(isOpenAt(p, 20 * 60 + 31), false);
-  assert.equal(isOpenAt(p, 25 * 60), false);
-});
-
-test("isOpenAt: 마감이 자정을 넘기는 곳은 다음날 새벽 도착도 영업 중으로 본다", () => {
-  const bar = place({ id: "bar", openTime: "18:00", closeTime: "02:00" });
-  assert.equal(isOpenAt(bar, 23 * 60), true);
-  assert.equal(isOpenAt(bar, 25 * 60), true);
-  assert.equal(isOpenAt(bar, 26 * 60), false);
-});
-
-test("만나는 시간을 정하면 도착 시각에 영업 중이 아닌 후보를 제외한다", () => {
-  const early = place({ id: "early", category: "카페", rating: 4.9, openTime: "11:00", closeTime: "20:00" });
-  const normal = place({ id: "normal", category: "카페", rating: 3.5, openTime: "08:00", closeTime: "20:00" });
-  const stages: Stage[] = [recommend("s1", "카페")];
-
-  const at9 = buildCourse(stages, [early, normal], 15, {}, undefined, { startHour: 9, endHour: null });
-  const s9 = at9.stages[0];
-  assert.ok(s9.kind === "recommend");
-  assert.equal(s9.selected?.id, "normal");
-  assert.equal(s9.hoursExcludedCount, 1);
-  assert.equal(s9.arrivalMinutes, 9 * 60);
-
-  const at12 = buildCourse(stages, [early, normal], 15, {}, undefined, { startHour: 12, endHour: null });
-  const s12 = at12.stages[0];
-  assert.ok(s12.kind === "recommend");
-  assert.equal(s12.selected?.id, "early");
-});
-
-test("만나는 시간이 없으면 시간 조건 없이 기존처럼 추천한다", () => {
-  const early = place({ id: "early", category: "카페", rating: 4.9, openTime: "11:00", closeTime: "20:00" });
-  const result = buildCourse([recommend("s1", "카페")], [early], 15);
-  const s = result.stages[0];
-  assert.ok(s.kind === "recommend");
-  assert.equal(s.selected?.id, "early");
-  assert.equal(s.arrivalMinutes, null);
-  assert.equal(result.estimatedEndMinutes, null);
-  assert.equal(result.exceedsEndTime, false);
-});
-
-test("예상 종료 시각이 헤어지는 시간을 넘으면 exceedsEndTime이 true", () => {
-  const a = place({ id: "a", category: "맛집" });
-  const b = place({ id: "b", category: "카페" });
-  const stages: Stage[] = [recommend("s1", "맛집"), recommend("s2", "카페")];
-
-  const tight = buildCourse(stages, [a, b], 15, {}, undefined, { startHour: 12, endHour: 13 });
-  assert.equal(tight.exceedsEndTime, true);
-
-  const loose = buildCourse(stages, [a, b], 15, {}, undefined, { startHour: 12, endHour: 18 });
-  assert.equal(loose.exceedsEndTime, false);
 });
