@@ -12,7 +12,7 @@ import {
   REGION_CENTER,
   buildCourse,
   isWithinRegionRange,
-  kakaoMapLinkFor,
+  naverMapLinkFor,
   walkingMinutesBetween,
   type CourseResult,
   type DesignatedPlace,
@@ -21,6 +21,7 @@ import {
   type StageOverrides,
   type StageResult,
 } from "@/lib/course";
+import { searchPlaces } from "@/lib/placeSearch";
 
 const CATEGORIES: PlaceCategory[] = [
   "문화 생활",
@@ -32,12 +33,11 @@ const CATEGORIES: PlaceCategory[] = [
 ];
 
 const MIN_TRAVEL_MINUTES = 5;
+const TRAVEL_MINUTES_STEP = 5;
 const MAX_TRAVEL_MINUTES = 30;
 const DEFAULT_TRAVEL_MINUTES = 15;
 const MAX_STAGES = 8;
 const MAX_RECENT_DESIGNATED = 10;
-/** 아바타 영역이 차지하는 화면 비율(나머지는 코스 만들기 패널). 드래그로 바꿀 수 없는 고정값. */
-const AVATAR_FIXED_SHARE = 0.35;
 
 const LAST_INPUT_STORAGE_KEY = "course-app:last-input";
 const RECENT_DESIGNATED_STORAGE_KEY = "course-app:recent-designated";
@@ -49,6 +49,11 @@ const FRIENDS_STORAGE_KEY = "course-app:friends";
 const FRIEND_REQUESTS_STORAGE_KEY = "course-app:friend-requests";
 const GROUPS_STORAGE_KEY = "course-app:groups";
 const PLAN_DATE_STORAGE_KEY = "course-app:plan-date";
+const THEME_NOTE_STORAGE_KEY = "course-app:theme-note";
+const MEET_TIMES_STORAGE_KEY = "course-app:meet-times";
+/** 헤어지는 시간은 다음날 오전 11시(=35시)까지 고를 수 있다. */
+const MAX_END_HOUR = 35;
+const MAX_THEME_NOTE_LENGTH = 300;
 const MAX_GROUP_NAME_LENGTH = 20;
 
 let nextId = 1;
@@ -66,8 +71,9 @@ function generateId(prefix: string) {
 
 /** 이전 버전에서 저장된 카테고리·세부 카테고리 이름을 지금 이름으로 바꾼다. */
 const OLD_SUB_CATEGORY_NAMES: Record<string, string> = {
-  디저트: "디저트 중심",
-  브런치: "커피 중심",
+  브런치: "커피",
+  "커피 중심": "커피",
+  "디저트 중심": "디저트",
   뷰: "공간 특화",
 };
 
@@ -81,6 +87,41 @@ function migrateStage(stage: Stage): Stage {
   const subCategory =
     sub && category === "카페" ? (OLD_SUB_CATEGORY_NAMES[sub] ?? sub) : sub;
   return { ...stage, category, subCategory };
+}
+
+/** "상관없음" 상태의 출발지 장소(아직 장소를 고르지 않음). 추천 계산에는 넣지 않는다. */
+const DEFAULT_ORIGIN_PLACE_ID = "default-origin";
+
+function isUnsetStage(stage: Stage): boolean {
+  return (
+    stage.kind === "designated" && stage.place.id === DEFAULT_ORIGIN_PLACE_ID
+  );
+}
+
+/** 장소를 아직 고르지 않은 "상관없음" 지정 단계(출발지 기본값, 단계 추가의 "상관없음")를 만든다. */
+function unsetPlace(): DesignatedPlace {
+  return {
+    id: DEFAULT_ORIGIN_PLACE_ID,
+    name: "상관없음",
+    address: "",
+    lat: REGION_CENTER.lat,
+    lng: REGION_CENTER.lng,
+  };
+}
+
+/** 일정 맨 앞에 출발지 단계가 항상 하나 있도록 맞춘다(없으면 "상관없음" 출발지를 앞에 넣고, 여러 개면 첫 번째만 남긴다). */
+function ensureOriginStage(stages: Stage[]): Stage[] {
+  const origin = stages.find((s) => s.isOrigin);
+  const rest = stages.filter((s) => !s.isOrigin);
+  return [
+    origin ?? {
+      id: generateId("stage"),
+      kind: "designated" as const,
+      isOrigin: true,
+      place: unsetPlace(),
+    },
+    ...rest,
+  ];
 }
 
 function dedupeStageIds(stages: Stage[]): Stage[] {
@@ -167,7 +208,8 @@ function loadPlanDate(): string {
   const today = todayString();
   try {
     const saved = window.localStorage.getItem(PLAN_DATE_STORAGE_KEY);
-    if (saved && /^\d{4}-\d{2}-\d{2}$/.test(saved) && saved >= today) return saved;
+    if (saved && /^\d{4}-\d{2}-\d{2}$/.test(saved) && saved >= today)
+      return saved;
   } catch {
     // 저장소를 못 읽으면 오늘로 둔다.
   }
@@ -184,6 +226,39 @@ function formatOpeningHours(place: Place): string {
   }`;
 }
 
+/** 0~30시를 화면 문구로. 24시 이후는 "다음날 …"로 보여준다. 예: 14 → 오후 2시, 26 → 다음날 오전 2시 */
+function hourLabel(hour: number): string {
+  const day = hour >= 24 ? "다음날 " : "";
+  const h = hour % 24;
+  if (h === 0) return `${day}자정`;
+  if (h === 12) return `${day}낮 12시`;
+  return `${day}${h < 12 ? "오전" : "오후"} ${h % 12}시`;
+}
+
+function loadMeetTimes(): { start: number | null; end: number | null } {
+  try {
+    const parsed: unknown = JSON.parse(
+      window.localStorage.getItem(MEET_TIMES_STORAGE_KEY) ?? "null",
+    );
+    if (parsed && typeof parsed === "object") {
+      const { start, end } = parsed as { start?: unknown; end?: unknown };
+      const s =
+        typeof start === "number" && start >= 0 && start <= 23 ? start : null;
+      const e =
+        typeof end === "number" &&
+        end >= 1 &&
+        end <= MAX_END_HOUR &&
+        (s === null || end > s)
+          ? end
+          : null;
+      return { start: s, end: e };
+    }
+  } catch {
+    // 저장소를 못 읽거나 형식이 틀리면 "상관없음"으로 둔다.
+  }
+  return { start: null, end: null };
+}
+
 function positionLabel(index: number, total: number): "출발" | "경유" | "도착" {
   if (index === 0) return "출발";
   if (index === total - 1) return "도착";
@@ -196,10 +271,17 @@ function CourseBuilder() {
     DEFAULT_TRAVEL_MINUTES,
   );
   const [planDate, setPlanDate] = useState("");
+  const [themeNote, setThemeNote] = useState("");
+  const [startHour, setStartHour] = useState<number | null>(null);
+  const [endHour, setEndHour] = useState<number | null>(null);
   const [hydrated, setHydrated] = useState(false);
   const [showResult, setShowResult] = useState(false);
   const [overrides, setOverrides] = useState<StageOverrides>({});
   const [addSheetOpen, setAddSheetOpen] = useState(false);
+  // 일정 칸의 "변경"을 누르면 단계 추가와 같은 창이 뜨고, 고른 것으로 그 칸이 바뀐다. 바꿀 칸의 id.
+  const [changeStageTarget, setChangeStageTarget] = useState<string | null>(
+    null,
+  );
   const [designatedEditTarget, setDesignatedEditTarget] = useState<
     string | "new" | null
   >(null);
@@ -213,6 +295,8 @@ function CourseBuilder() {
   const [locationStatus, setLocationStatus] = useState<LocationStatus>("idle");
   const [navigating, setNavigating] = useState(false);
   const [groupScreenOpen, setGroupScreenOpen] = useState(false);
+  // 로그인 직후에는 아바타 홈 화면만 보이고, "코스 추천 받기"를 누르면 코스 만들기 창으로 넘어간다.
+  const [onHome, setOnHome] = useState(true);
 
   useEffect(() => {
     // 위치 정보는 브라우저(외부 시스템)에서 비동기로 받아오므로 결과를
@@ -261,10 +345,25 @@ function CourseBuilder() {
     // 여기서 한 번만 읽어 상태에 반영한다.
     const last = loadLastInput();
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setStages(last ? dedupeStageIds(last.stages) : []);
-    setMaxTravelMinutes(last ? last.maxTravelMinutes : DEFAULT_TRAVEL_MINUTES);
+    setStages(ensureOriginStage(last ? dedupeStageIds(last.stages) : []));
+    setMaxTravelMinutes(
+      last ? snapTravelMinutes(last.maxTravelMinutes) : DEFAULT_TRAVEL_MINUTES,
+    );
     setRecentDesignated(loadRecentDesignated());
     setPlanDate(loadPlanDate());
+    try {
+      setThemeNote(
+        (window.localStorage.getItem(THEME_NOTE_STORAGE_KEY) ?? "").slice(
+          0,
+          MAX_THEME_NOTE_LENGTH,
+        ),
+      );
+    } catch {
+      // 저장소를 못 읽으면 빈 칸으로 둔다.
+    }
+    const meet = loadMeetTimes();
+    setStartHour(meet.start);
+    setEndHour(meet.end);
     setHydrated(true);
   }, []);
 
@@ -282,8 +381,42 @@ function CourseBuilder() {
     }
   }, [planDate, hydrated]);
 
+  useEffect(() => {
+    if (!hydrated) return;
+    try {
+      window.localStorage.setItem(THEME_NOTE_STORAGE_KEY, themeNote);
+    } catch {
+      // 저장에 실패해도 이번 화면에서는 적은 내용이 유지된다.
+    }
+  }, [themeNote, hydrated]);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    try {
+      window.localStorage.setItem(
+        MEET_TIMES_STORAGE_KEY,
+        JSON.stringify({ start: startHour, end: endHour }),
+      );
+    } catch {
+      // 저장에 실패해도 이번 화면에서는 고른 시간이 유지된다.
+    }
+  }, [startHour, endHour, hydrated]);
+
+  /** 만나는 시간을 바꿨을 때, 헤어지는 시간이 그보다 같거나 빠르면 "상관없음"으로 되돌린다. */
+  function changeStartHour(hour: number | null) {
+    setStartHour(hour);
+    if (hour !== null && endHour !== null && endHour <= hour) setEndHour(null);
+  }
+
   const result = useMemo(
-    () => buildCourse(stages, places, maxTravelMinutes, overrides, planDate),
+    () =>
+      buildCourse(
+        stages.filter((s) => !isUnsetStage(s)),
+        places,
+        maxTravelMinutes,
+        overrides,
+        planDate,
+      ),
     [stages, maxTravelMinutes, overrides, planDate],
   );
 
@@ -294,6 +427,14 @@ function CourseBuilder() {
     setStages((prev) => [
       ...prev,
       { id: generateId("stage"), kind: "recommend", category, subCategory },
+    ]);
+    setAddSheetOpen(false);
+  }
+
+  function addUnsetDesignatedStage() {
+    setStages((prev) => [
+      ...prev,
+      { id: generateId("stage"), kind: "designated", place: unsetPlace() },
     ]);
     setAddSheetOpen(false);
   }
@@ -326,7 +467,7 @@ function CourseBuilder() {
   }
 
   function removeStage(id: string) {
-    setStages((prev) => prev.filter((s) => s.id !== id));
+    setStages((prev) => prev.filter((s) => s.id !== id || s.isOrigin));
   }
 
   function makeCourse() {
@@ -376,37 +517,43 @@ function CourseBuilder() {
           }
           onDecideRoute={() => setNavigating(true)}
         />
+      ) : onHome ? (
+        <div className="relative h-screen w-full bg-white dark:bg-black">
+          <AvatarScene
+            status={locationStatus}
+            onOpenGroup={() => setGroupScreenOpen(true)}
+          />
+          <button
+            type="button"
+            onClick={() => setOnHome(false)}
+            className="absolute bottom-8 left-1/2 h-14 -translate-x-1/2 rounded-full bg-black px-8 text-base font-semibold text-white shadow-lg dark:bg-white dark:text-black"
+          >
+            코스 추천 받기
+          </button>
+        </div>
       ) : (
-        <div className="flex h-screen w-full flex-col bg-white dark:bg-black">
-          <div
-            style={{ flexGrow: AVATAR_FIXED_SHARE, flexBasis: 0 }}
-            className="min-h-0"
-          >
-            <AvatarScene
-              status={locationStatus}
-              onOpenGroup={() => setGroupScreenOpen(true)}
-            />
-          </div>
-
-          <div
-            style={{ flexGrow: 1 - AVATAR_FIXED_SHARE, flexBasis: 0 }}
-            className="min-h-0 overflow-hidden"
-          >
-            <InputView
-              stages={stages}
-              planDate={planDate}
-              onSetPlanDate={setPlanDate}
-              maxTravelMinutes={maxTravelMinutes}
-              onSetMaxTravelMinutes={setMaxTravelMinutes}
-              onOpenAddSheet={() => setAddSheetOpen(true)}
-              onRemoveStage={removeStage}
-              onReorderStages={setStages}
-              onRequestChangeDesignated={(stageId) =>
-                setDesignatedEditTarget(stageId)
-              }
-              onMakeCourse={makeCourse}
-            />
-          </div>
+        <div className="h-screen w-full overflow-hidden bg-white dark:bg-black">
+          <InputView
+            stages={stages}
+            planDate={planDate}
+            onSetPlanDate={setPlanDate}
+            startHour={startHour}
+            endHour={endHour}
+            onSetStartHour={changeStartHour}
+            onSetEndHour={setEndHour}
+            themeNote={themeNote}
+            onSetThemeNote={setThemeNote}
+            maxTravelMinutes={maxTravelMinutes}
+            onSetMaxTravelMinutes={setMaxTravelMinutes}
+            onOpenAddSheet={() => setAddSheetOpen(true)}
+            onRemoveStage={removeStage}
+            onReorderStages={setStages}
+            onRequestChangeDesignated={(stageId) =>
+              setChangeStageTarget(stageId)
+            }
+            onMakeCourse={makeCourse}
+            onBackToHome={() => setOnHome(true)}
+          />
         </div>
       )}
 
@@ -415,14 +562,64 @@ function CourseBuilder() {
           canAddMore={stages.length < MAX_STAGES}
           onClose={() => setAddSheetOpen(false)}
           onAddRecommend={addRecommendStage}
+          onAddUnsetDesignated={addUnsetDesignatedStage}
           onStartDesignated={() => setDesignatedEditTarget("new")}
+        />
+      )}
+
+      {changeStageTarget && (
+        <AddStageSheet
+          title="단계 변경"
+          canAddMore
+          onClose={() => setChangeStageTarget(null)}
+          onAddRecommend={(category, subCategory) => {
+            setStages((prev) =>
+              prev.map((s) =>
+                s.id === changeStageTarget
+                  ? {
+                      id: generateId("stage"),
+                      kind: "recommend" as const,
+                      category,
+                      subCategory,
+                      isOrigin: s.isOrigin,
+                    }
+                  : s,
+              ),
+            );
+            setOverrides({});
+            setChangeStageTarget(null);
+          }}
+          onAddUnsetDesignated={() => {
+            setStages((prev) =>
+              prev.map((s) =>
+                s.id !== changeStageTarget
+                  ? s
+                  : s.kind === "designated"
+                    ? { ...s, place: unsetPlace() }
+                    : {
+                        id: generateId("stage"),
+                        kind: "designated" as const,
+                        place: unsetPlace(),
+                        isOrigin: s.isOrigin,
+                      },
+              ),
+            );
+            setOverrides({});
+            setChangeStageTarget(null);
+          }}
+          onStartDesignated={() => {
+            setDesignatedEditTarget(changeStageTarget);
+            setChangeStageTarget(null);
+          }}
         />
       )}
 
       {designatedEditTarget && (
         <DesignatedPlaceSheet
           initial={
-            editingPlace && editingPlace.kind === "designated"
+            editingPlace &&
+            editingPlace.kind === "designated" &&
+            !isUnsetStage(editingPlace)
               ? editingPlace.place
               : null
           }
@@ -438,6 +635,12 @@ function CourseBuilder() {
 function InputView({
   planDate,
   onSetPlanDate,
+  startHour,
+  endHour,
+  onSetStartHour,
+  onSetEndHour,
+  themeNote,
+  onSetThemeNote,
   stages,
   maxTravelMinutes,
   onSetMaxTravelMinutes,
@@ -446,9 +649,16 @@ function InputView({
   onReorderStages,
   onRequestChangeDesignated,
   onMakeCourse,
+  onBackToHome,
 }: {
   planDate: string;
   onSetPlanDate: (date: string) => void;
+  startHour: number | null;
+  endHour: number | null;
+  onSetStartHour: (hour: number | null) => void;
+  onSetEndHour: (hour: number | null) => void;
+  themeNote: string;
+  onSetThemeNote: (note: string) => void;
   stages: Stage[];
   maxTravelMinutes: number;
   onSetMaxTravelMinutes: (minutes: number) => void;
@@ -457,14 +667,47 @@ function InputView({
   onReorderStages: (stages: Stage[]) => void;
   onRequestChangeDesignated: (stageId: string) => void;
   onMakeCourse: () => void;
+  onBackToHome: () => void;
 }) {
   const [travelPickerOpen, setTravelPickerOpen] = useState(false);
+  const [timePicker, setTimePicker] = useState<"start" | "end" | null>(null);
+  const [aiNotice, setAiNotice] = useState(false);
+  const hasNote = themeNote.trim().length > 0;
+
+  // 단계가 없으면 AI가 짜주는 흐름(아직 준비 중), 있으면 지금처럼 바로 코스를 만든다.
+  const origin = stages.find((s) => s.isOrigin);
+  const others = stages.filter((s) => !s.isOrigin);
+  const hasOthers = others.some((s) => !isUnsetStage(s));
+  const makeLabel = hasOthers
+    ? "코스 만들기"
+    : hasNote
+      ? "이 분위기로 코스 추천받기"
+      : "AI에게 코스 추천받기";
+
+  function onPressMake() {
+    if (hasOthers) {
+      setAiNotice(false);
+      onMakeCourse();
+    } else {
+      setAiNotice(true);
+    }
+  }
 
   return (
-    <div className="mx-auto flex h-full w-full max-w-md flex-col gap-6 overflow-y-auto bg-white px-4 py-6 dark:bg-black">
-      <h1 className="text-2xl font-bold text-black dark:text-white">
-        코스 만들기
-      </h1>
+    <div className="mx-auto flex h-full w-full max-w-md flex-col gap-6 overflow-y-auto bg-white px-4 pt-6 dark:bg-black">
+      <div className="flex items-center gap-3">
+        <button
+          type="button"
+          onClick={onBackToHome}
+          aria-label="아바타 홈으로"
+          className="flex h-10 w-10 items-center justify-center rounded-lg border border-zinc-300 text-lg dark:border-zinc-700 dark:text-white"
+        >
+          ←
+        </button>
+        <h1 className="text-2xl font-bold text-black dark:text-white">
+          코스 만들기
+        </h1>
+      </div>
 
       <div className="flex gap-3">
         <section className="flex min-w-0 flex-1 flex-col gap-2">
@@ -496,29 +739,108 @@ function InputView({
         </section>
       </div>
 
-      <section className="flex flex-col gap-3">
-        <label className="text-sm font-medium text-zinc-600 dark:text-zinc-400">
-          일정 단계
-        </label>
+      <div className="flex gap-3">
+        {(
+          [
+            ["start", "만나는 시간", startHour],
+            ["end", "헤어지는 시간", endHour],
+          ] as const
+        ).map(([which, label, hour]) => (
+          <section key={which} className="flex min-w-0 flex-1 flex-col gap-2">
+            <span className="text-sm font-medium text-zinc-600 dark:text-zinc-400">
+              {label}
+            </span>
+            <button
+              type="button"
+              onClick={() => setTimePicker(which)}
+              aria-label={`${label} ${hour === null ? "상관없음" : hourLabel(hour)}, 눌러서 바꾸기`}
+              className="flex h-12 w-full items-center justify-between gap-1 rounded-xl border border-zinc-300 bg-white px-3 text-left text-base text-black dark:border-zinc-700 dark:bg-zinc-900 dark:text-white"
+            >
+              <span
+                className={`truncate ${hour === null ? "text-zinc-500 dark:text-zinc-400" : ""}`}
+              >
+                {hour === null ? "상관없음" : hourLabel(hour)}
+              </span>
+              <span aria-hidden className="shrink-0 text-zinc-500">
+                ▾
+              </span>
+            </button>
+          </section>
+        ))}
+      </div>
 
-        {stages.length === 0 && (
-          <p className="text-sm text-zinc-400 dark:text-zinc-500">
-            예: 문화 생활 → 맛집 → 카페. 아래 버튼으로 단계를 추가해보세요.
-          </p>
+      {timePicker && (
+        <TimePickerSheet
+          title={timePicker === "start" ? "만나는 시간" : "헤어지는 시간"}
+          value={timePicker === "start" ? startHour : endHour}
+          withDay={timePicker === "end"}
+          minExclusive={timePicker === "end" ? startHour : null}
+          onConfirm={(hour) => {
+            if (timePicker === "start") onSetStartHour(hour);
+            else onSetEndHour(hour);
+            setTimePicker(null);
+          }}
+          onClose={() => setTimePicker(null)}
+        />
+      )}
+
+      <section className="flex flex-col gap-2">
+        <label
+          htmlFor="theme-note"
+          className="flex items-center justify-between text-sm font-medium text-zinc-600 dark:text-zinc-400"
+        >
+          <span>
+            어떤 하루를 보내고 싶으신가요?{" "}
+            <span className="font-normal text-zinc-400 dark:text-zinc-500">
+              (비워둬도 돼요)
+            </span>
+          </span>
+          <span className="text-xs font-normal text-zinc-400 dark:text-zinc-500">
+            {themeNote.length}/{MAX_THEME_NOTE_LENGTH}
+          </span>
+        </label>
+        <textarea
+          id="theme-note"
+          value={themeNote}
+          onChange={(e) => onSetThemeNote(e.target.value)}
+          maxLength={MAX_THEME_NOTE_LENGTH}
+          rows={2}
+          placeholder="예: 조용하고 감성적인 분위기, 전시 보고 한옥 카페에서 쉬고 싶어요"
+          className="w-full resize-none rounded-xl border border-zinc-300 bg-white px-3 py-3 text-base text-black placeholder:text-zinc-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-white dark:placeholder:text-zinc-500"
+        />
+      </section>
+
+      <section className="flex flex-col gap-3">
+        <div className="flex flex-wrap items-baseline gap-x-2">
+          <span className="text-sm font-medium text-zinc-600 dark:text-zinc-400">
+            일정 단계
+          </span>
+          <span className="text-xs text-zinc-400 dark:text-zinc-500">
+            가고 싶은 장소나 테마를 직접 추가해요!
+          </span>
+        </div>
+
+        {origin && (
+          <StageRow
+            stage={origin}
+            fixed
+            onRemove={onRemoveStage}
+            onRequestChangeDesignated={onRequestChangeDesignated}
+          />
         )}
 
         <Reorder.Group
           axis="y"
-          values={stages}
-          onReorder={onReorderStages}
+          values={others}
+          onReorder={(next) =>
+            onReorderStages(origin ? [origin, ...next] : next)
+          }
           className="flex flex-col gap-3"
         >
-          {stages.map((stage, index) => (
+          {others.map((stage) => (
             <StageRow
               key={stage.id}
               stage={stage}
-              index={index}
-              total={stages.length}
               onRemove={onRemoveStage}
               onRequestChangeDesignated={onRequestChangeDesignated}
             />
@@ -555,7 +877,10 @@ function InputView({
       </section>
 
       {travelPickerOpen && (
-        <TravelTimePicker
+        <ScrollPickerSheet
+          title="구간별 최대 이동시간"
+          testId="travel-picker"
+          options={TRAVEL_OPTIONS.map((m) => ({ value: m, label: `${m}분` }))}
           value={maxTravelMinutes}
           onConfirm={(minutes) => {
             onSetMaxTravelMinutes(minutes);
@@ -565,55 +890,118 @@ function InputView({
         />
       )}
 
-      <button
-        type="button"
-        onClick={onMakeCourse}
-        disabled={stages.length === 0}
-        className="h-14 w-full rounded-xl bg-black text-lg font-semibold text-white disabled:opacity-30 dark:bg-white dark:text-black"
-      >
-        코스 만들기
-      </button>
+      <div className="sticky bottom-0 -mx-4 mt-auto flex flex-col gap-2 bg-white/95 px-4 pb-6 pt-3 backdrop-blur dark:bg-black/95">
+        {aiNotice && !hasOthers && (
+          <p className="text-center text-sm text-amber-600 dark:text-amber-400">
+            AI 추천은 아직 준비 중이에요. 위에서 단계를 직접 추가해보세요.
+          </p>
+        )}
+        <button
+          type="button"
+          onClick={onPressMake}
+          className="h-14 w-full rounded-xl bg-black text-lg font-semibold text-white dark:bg-white dark:text-black"
+        >
+          {makeLabel}
+        </button>
+      </div>
     </div>
   );
 }
 
 const TRAVEL_PICKER_ITEM_HEIGHT = 48;
 const TRAVEL_OPTIONS = Array.from(
-  { length: MAX_TRAVEL_MINUTES - MIN_TRAVEL_MINUTES + 1 },
-  (_, i) => MIN_TRAVEL_MINUTES + i,
+  {
+    length: (MAX_TRAVEL_MINUTES - MIN_TRAVEL_MINUTES) / TRAVEL_MINUTES_STEP + 1,
+  },
+  (_, i) => MIN_TRAVEL_MINUTES + i * TRAVEL_MINUTES_STEP,
 );
 
-/** 위아래로 스크롤해서 가운데에 멈춘 값을 고르는 구간별 최대 이동시간 선택창. */
-function TravelTimePicker({
-  value,
-  onConfirm,
-  onClose,
+/** 예전에 1분 단위로 저장된 값을 가장 가까운 5분 단위로 맞춘다. */
+function snapTravelMinutes(minutes: number): number {
+  const snapped =
+    Math.round(minutes / TRAVEL_MINUTES_STEP) * TRAVEL_MINUTES_STEP;
+  return Math.min(Math.max(snapped, MIN_TRAVEL_MINUTES), MAX_TRAVEL_MINUTES);
+}
+
+/** 위아래로 스크롤하면 가운데 칸에 멈춘 항목이 선택되는 한 줄(바퀴). */
+function WheelColumn({
+  labels,
+  index,
+  onChange,
+  testId,
 }: {
-  value: number;
-  onConfirm: (minutes: number) => void;
-  onClose: () => void;
+  labels: string[];
+  index: number;
+  onChange: (index: number) => void;
+  testId: string;
 }) {
   const listRef = useRef<HTMLDivElement>(null);
-  const [selected, setSelected] = useState(value);
+  const [initialIndex] = useState(index);
 
   useEffect(() => {
     // 열릴 때 현재 값이 가운데에 오도록 한 번만 맞춘다.
-    listRef.current?.scrollTo({ top: (value - MIN_TRAVEL_MINUTES) * TRAVEL_PICKER_ITEM_HEIGHT });
-  }, [value]);
+    listRef.current?.scrollTo({
+      top: initialIndex * TRAVEL_PICKER_ITEM_HEIGHT,
+    });
+  }, [initialIndex]);
 
   function onScroll() {
     const el = listRef.current;
     if (!el) return;
-    const index = Math.round(el.scrollTop / TRAVEL_PICKER_ITEM_HEIGHT);
-    const clamped = Math.min(Math.max(index, 0), TRAVEL_OPTIONS.length - 1);
-    setSelected(TRAVEL_OPTIONS[clamped]);
+    const next = Math.round(el.scrollTop / TRAVEL_PICKER_ITEM_HEIGHT);
+    onChange(Math.min(Math.max(next, 0), labels.length - 1));
   }
 
+  return (
+    <div
+      ref={listRef}
+      onScroll={onScroll}
+      data-testid={testId}
+      className="relative h-full min-w-0 flex-1 snap-y snap-mandatory overflow-y-scroll"
+      style={{ scrollbarWidth: "none" }}
+    >
+      <div style={{ height: TRAVEL_PICKER_ITEM_HEIGHT }} />
+      {labels.map((label, i) => (
+        <div
+          key={label}
+          onClick={() =>
+            listRef.current?.scrollTo({
+              top: i * TRAVEL_PICKER_ITEM_HEIGHT,
+              behavior: "smooth",
+            })
+          }
+          className={`flex snap-center items-center justify-center text-xl ${
+            i === index
+              ? "font-bold text-black dark:text-white"
+              : "text-zinc-400 dark:text-zinc-500"
+          }`}
+          style={{ height: TRAVEL_PICKER_ITEM_HEIGHT }}
+        >
+          {label}
+        </div>
+      ))}
+      <div style={{ height: TRAVEL_PICKER_ITEM_HEIGHT }} />
+    </div>
+  );
+}
+
+/** 아래에서 올라오는 선택창의 공통 틀(제목, ✕, 바퀴를 담는 칸). */
+function PickerSheetFrame({
+  title,
+  onClose,
+  children,
+}: {
+  title: string;
+  onClose: () => void;
+  children: React.ReactNode;
+}) {
   return (
     <div className="fixed inset-0 z-10 flex items-end justify-center bg-black/50 pb-16">
       <div className="mx-2 flex w-full max-w-md flex-col gap-4 rounded-2xl bg-white p-4 dark:bg-zinc-900">
         <div className="flex items-center justify-between">
-          <h2 className="text-lg font-bold text-black dark:text-white">구간별 최대 이동시간</h2>
+          <h2 className="text-lg font-bold text-black dark:text-white">
+            {title}
+          </h2>
           <button
             type="button"
             onClick={onClose}
@@ -623,130 +1011,261 @@ function TravelTimePicker({
             ✕
           </button>
         </div>
-
-        <div className="relative" style={{ height: TRAVEL_PICKER_ITEM_HEIGHT * 3 }}>
-          <div
-            className="pointer-events-none absolute inset-x-0 rounded-lg bg-zinc-100 dark:bg-zinc-800"
-            style={{ top: TRAVEL_PICKER_ITEM_HEIGHT, height: TRAVEL_PICKER_ITEM_HEIGHT }}
-          />
-          <div
-            ref={listRef}
-            onScroll={onScroll}
-            data-testid="travel-picker"
-            className="relative h-full snap-y snap-mandatory overflow-y-scroll"
-            style={{ scrollbarWidth: "none" }}
-          >
-            <div style={{ height: TRAVEL_PICKER_ITEM_HEIGHT }} />
-            {TRAVEL_OPTIONS.map((m) => (
-              <div
-                key={m}
-                onClick={() =>
-                  listRef.current?.scrollTo({
-                    top: (m - MIN_TRAVEL_MINUTES) * TRAVEL_PICKER_ITEM_HEIGHT,
-                    behavior: "smooth",
-                  })
-                }
-                className={`flex snap-center items-center justify-center text-xl ${
-                  m === selected
-                    ? "font-bold text-black dark:text-white"
-                    : "text-zinc-400 dark:text-zinc-500"
-                }`}
-                style={{ height: TRAVEL_PICKER_ITEM_HEIGHT }}
-              >
-                {m}분
-              </div>
-            ))}
-            <div style={{ height: TRAVEL_PICKER_ITEM_HEIGHT }} />
-          </div>
-        </div>
-
-        <button
-          type="button"
-          onClick={() => onConfirm(selected)}
-          className="h-12 w-full rounded-xl bg-black text-base font-semibold text-white dark:bg-white dark:text-black"
-        >
-          확인
-        </button>
+        {children}
       </div>
     </div>
   );
 }
 
+function WheelRow({ children }: { children: React.ReactNode }) {
+  return (
+    <div
+      className="relative flex"
+      style={{ height: TRAVEL_PICKER_ITEM_HEIGHT * 3 }}
+    >
+      <div
+        className="pointer-events-none absolute inset-x-0 rounded-lg bg-zinc-100 dark:bg-zinc-800"
+        style={{
+          top: TRAVEL_PICKER_ITEM_HEIGHT,
+          height: TRAVEL_PICKER_ITEM_HEIGHT,
+        }}
+      />
+      {children}
+    </div>
+  );
+}
+
+/** 값을 한 줄 바퀴에서 고르는 선택창(구간별 최대 이동시간). */
+function ScrollPickerSheet({
+  title,
+  testId,
+  options,
+  value,
+  onConfirm,
+  onClose,
+}: {
+  title: string;
+  testId: string;
+  options: { value: number; label: string }[];
+  value: number;
+  onConfirm: (value: number) => void;
+  onClose: () => void;
+}) {
+  const [selectedIndex, setSelectedIndex] = useState(
+    Math.max(
+      options.findIndex((o) => o.value === value),
+      0,
+    ),
+  );
+
+  return (
+    <PickerSheetFrame title={title} onClose={onClose}>
+      <WheelRow>
+        <WheelColumn
+          labels={options.map((o) => o.label)}
+          index={selectedIndex}
+          onChange={setSelectedIndex}
+          testId={testId}
+        />
+      </WheelRow>
+      <button
+        type="button"
+        onClick={() => onConfirm(options[selectedIndex].value)}
+        className="h-12 w-full rounded-xl bg-black text-base font-semibold text-white dark:bg-white dark:text-black"
+      >
+        확인
+      </button>
+    </PickerSheetFrame>
+  );
+}
+
+const AMPM_LABELS = ["오전", "오후"];
+const DAY_LABELS = ["당일", "다음날"];
+const HOUR12_LABELS = Array.from({ length: 12 }, (_, i) => `${i + 1}시`);
+
+/**
+ * 만나는/헤어지는 시간을 "오전·오후 + 1~12시"로 고르는 선택창.
+ * 헤어지는 시간에는 새벽까지 노는 코스를 위해 "당일/다음날" 칸이 더 있다.
+ * 값은 0~35(시)이며 24 이상은 다음날이다. 오전 12시=0, 오후 12시=12.
+ */
+function TimePickerSheet({
+  title,
+  value,
+  withDay,
+  minExclusive,
+  onConfirm,
+  onClose,
+}: {
+  title: string;
+  value: number | null;
+  withDay: boolean;
+  /** 이 시각보다 늦은 시간만 고를 수 있다(헤어지는 시간 = 만나는 시간). 없으면 null. */
+  minExclusive: number | null;
+  onConfirm: (hour: number | null) => void;
+  onClose: () => void;
+}) {
+  // 값이 없을 때 바퀴가 처음 놓일 자리: 만나는 시간은 오전 10시, 헤어지는 시간은 만나는 시간 3시간 뒤(없으면 오후 9시).
+  const start =
+    value ?? (withDay ? Math.min((minExclusive ?? 18) + 3, MAX_END_HOUR) : 10);
+  const [day, setDay] = useState(start >= 24 ? 1 : 0);
+  const [ampm, setAmpm] = useState(start % 24 >= 12 ? 1 : 0);
+  const [hour12Index, setHour12Index] = useState((start % 12 || 12) - 1);
+
+  const hour = day * 24 + ampm * 12 + ((hour12Index + 1) % 12);
+  const tooEarly = minExclusive !== null && hour <= minExclusive;
+  const tooLate = hour > MAX_END_HOUR;
+  const error = tooEarly
+    ? `만나는 시간(${hourLabel(minExclusive)})보다 늦어야 해요.`
+    : tooLate
+      ? `다음날은 ${hourLabel(MAX_END_HOUR)}까지만 고를 수 있어요.`
+      : "";
+
+  return (
+    <PickerSheetFrame title={title} onClose={onClose}>
+      {withDay && (
+        <div className="flex gap-2" role="group" aria-label="당일 또는 다음날">
+          {DAY_LABELS.map((label, i) => (
+            <button
+              key={label}
+              type="button"
+              onClick={() => setDay(i)}
+              aria-pressed={day === i}
+              data-testid={`time-day-${i}`}
+              className={`h-10 flex-1 rounded-lg border text-sm font-medium ${
+                day === i
+                  ? "border-black bg-black text-white dark:border-white dark:bg-white dark:text-black"
+                  : "border-zinc-300 text-black dark:border-zinc-700 dark:text-white"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+      <WheelRow>
+        <WheelColumn
+          labels={AMPM_LABELS}
+          index={ampm}
+          onChange={setAmpm}
+          testId="time-ampm"
+        />
+        <WheelColumn
+          labels={HOUR12_LABELS}
+          index={hour12Index}
+          onChange={setHour12Index}
+          testId="time-hour"
+        />
+      </WheelRow>
+      <p
+        className="min-h-5 text-center text-sm text-zinc-500 dark:text-zinc-400"
+        role="status"
+      >
+        {error || `${hourLabel(hour)}`}
+      </p>
+      <div className="flex gap-2">
+        <button
+          type="button"
+          onClick={() => onConfirm(null)}
+          className="h-12 flex-1 rounded-xl border border-zinc-300 text-base font-medium text-black dark:border-zinc-700 dark:text-white"
+        >
+          상관없음
+        </button>
+        <button
+          type="button"
+          disabled={Boolean(error)}
+          onClick={() => onConfirm(hour)}
+          className="h-12 flex-[2] rounded-xl bg-black text-base font-semibold text-white disabled:opacity-30 dark:bg-white dark:text-black"
+        >
+          확인
+        </button>
+      </div>
+    </PickerSheetFrame>
+  );
+}
+
 function StageRow({
   stage,
-  index,
-  total,
+  fixed = false,
   onRemove,
   onRequestChangeDesignated,
 }: {
   stage: Stage;
-  index: number;
-  total: number;
+  /** 출발지처럼 순서를 옮기거나 지울 수 없는 단계. */
+  fixed?: boolean;
   onRemove: (id: string) => void;
   onRequestChangeDesignated: (stageId: string) => void;
 }) {
   const dragControls = useDragControls();
+
+  const rowClass =
+    "flex flex-col gap-2 rounded-xl border border-zinc-300 bg-white p-3 dark:border-zinc-700 dark:bg-black";
+
+  const body = (
+    <>
+      <div className="flex items-center gap-2">
+        {fixed ? (
+          <span className="w-2 shrink-0" aria-hidden />
+        ) : (
+          <button
+            type="button"
+            aria-label="눌러서 순서 변경"
+            onPointerDown={(e) => dragControls.start(e)}
+            style={{ touchAction: "none" }}
+            className="flex h-11 w-9 shrink-0 cursor-grab items-center justify-center text-xl text-zinc-400 active:cursor-grabbing dark:text-zinc-500"
+          >
+            ⠿
+          </button>
+        )}
+
+        <div className="flex flex-1 items-center gap-2">
+          {fixed && (
+            <span className="w-fit shrink-0 rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+              출발지
+            </span>
+          )}
+          <span className="text-base font-medium text-black dark:text-white">
+            {stage.kind === "recommend"
+              ? `${stage.category}${stage.subCategory ? ` · ${stage.subCategory}` : ""}`
+              : isUnsetStage(stage)
+                ? "상관없음"
+                : stage.place.name}
+          </span>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => onRequestChangeDesignated(stage.id)}
+          className="h-9 shrink-0 rounded-lg border border-zinc-300 px-3 text-sm font-medium text-zinc-600 dark:border-zinc-700 dark:text-zinc-300"
+        >
+          변경
+        </button>
+
+        {!fixed && (
+          <button
+            type="button"
+            aria-label="단계 삭제"
+            onClick={() => onRemove(stage.id)}
+            className="flex h-11 w-11 items-center justify-center rounded-lg border border-zinc-300 text-lg text-red-500 dark:border-zinc-700"
+          >
+            ✕
+          </button>
+        )}
+      </div>
+    </>
+  );
+
+  if (fixed) {
+    return <div className={rowClass}>{body}</div>;
+  }
 
   return (
     <Reorder.Item
       value={stage}
       dragListener={false}
       dragControls={dragControls}
-      className="flex flex-col gap-2 rounded-xl border border-zinc-300 bg-white p-3 dark:border-zinc-700 dark:bg-black"
+      className={rowClass}
     >
-      <div className="flex items-center gap-2">
-        <button
-          type="button"
-          aria-label="눌러서 순서 변경"
-          onPointerDown={(e) => dragControls.start(e)}
-          style={{ touchAction: "none" }}
-          className="flex h-11 w-9 shrink-0 cursor-grab items-center justify-center text-xl text-zinc-400 active:cursor-grabbing dark:text-zinc-500"
-        >
-          ⠿
-        </button>
-
-        <div className="flex-1">
-          {stage.kind === "recommend" ? (
-            <span className="text-base font-medium text-black dark:text-white">
-              {stage.category}
-              {stage.subCategory ? ` · ${stage.subCategory}` : ""}
-            </span>
-          ) : (
-            <div className="flex items-center gap-2">
-              <span className="w-fit rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
-                지정 · {positionLabel(index, total)}
-              </span>
-              <span className="text-base font-medium text-black dark:text-white">
-                {stage.place.name}
-              </span>
-            </div>
-          )}
-        </div>
-
-        <button
-          type="button"
-          aria-label="단계 삭제"
-          onClick={() => onRemove(stage.id)}
-          className="flex h-11 w-11 items-center justify-center rounded-lg border border-zinc-300 text-lg text-red-500 dark:border-zinc-700"
-        >
-          ✕
-        </button>
-      </div>
-
-      {stage.kind === "designated" && (
-        <>
-          <span className="text-sm text-zinc-500 dark:text-zinc-400">
-            {stage.place.address}
-          </span>
-          <button
-            type="button"
-            onClick={() => onRequestChangeDesignated(stage.id)}
-            className="h-9 w-fit rounded-lg border border-zinc-300 px-3 text-sm font-medium text-zinc-600 dark:border-zinc-700 dark:text-zinc-300"
-          >
-            변경
-          </button>
-        </>
-      )}
+      {body}
     </Reorder.Item>
   );
 }
@@ -756,6 +1275,8 @@ function AddStageSheet({
   onClose,
   onAddRecommend,
   onStartDesignated,
+  onAddUnsetDesignated,
+  title = "단계 추가",
 }: {
   canAddMore: boolean;
   onClose: () => void;
@@ -764,6 +1285,8 @@ function AddStageSheet({
     subCategory: string | undefined,
   ) => void;
   onStartDesignated: () => void;
+  onAddUnsetDesignated: () => void;
+  title?: string;
 }) {
   // 카테고리를 고르면, 세부 카테고리가 있는 항목(맛집·카페)만 한 번 더 고르고 나머지는 바로 추가한다.
   const [category, setCategory] = useState<PlaceCategory | null>(null);
@@ -781,7 +1304,7 @@ function AddStageSheet({
       <div className="mx-2 flex max-h-[70vh] w-full max-w-md flex-col gap-4 overflow-y-auto rounded-2xl bg-white p-4 dark:bg-zinc-900">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-bold text-black dark:text-white">
-            {category ? `${category} 세부 카테고리` : "단계 추가"}
+            {category ? `${category} 세부 카테고리` : title}
           </h2>
           <button
             type="button"
@@ -801,31 +1324,34 @@ function AddStageSheet({
 
         {canAddMore && category === null && (
           <div className="flex flex-col gap-3">
-            <div className="grid grid-cols-2 gap-2">
-              {CATEGORIES.map((c) => (
-                <button
-                  key={c}
-                  type="button"
-                  onClick={() => pickCategory(c)}
-                  className="flex h-14 items-center justify-center rounded-xl border border-zinc-300 text-base font-medium text-black dark:border-zinc-700 dark:text-white"
-                >
-                  {c}
-                </button>
-              ))}
-            </div>
             <button
               type="button"
               onClick={onStartDesignated}
-              className="flex h-14 w-full flex-col items-center justify-center gap-0.5 rounded-xl border border-zinc-300 dark:border-zinc-700"
+              className="flex h-14 w-full items-center justify-center rounded-xl border border-zinc-300 text-base font-medium text-black dark:border-zinc-700 dark:text-white"
             >
-              <span className="text-base font-medium text-black dark:text-white">
-                장소 직접 지정
-              </span>
-              <span className="text-xs text-zinc-500 dark:text-zinc-400">
-                꼭 갈 곳, 출발하는 역, 끝나는 곳을 넣으면 나머지는 그 주변에서
-                추천해요
-              </span>
+              장소 직접 지정
             </button>
+            <button
+              type="button"
+              onClick={onAddUnsetDesignated}
+              className="flex h-14 w-full items-center justify-center rounded-xl border border-zinc-300 text-base font-medium text-black dark:border-zinc-700 dark:text-white"
+            >
+              상관없음
+            </button>
+            {
+              <div className="grid grid-cols-2 gap-2">
+                {CATEGORIES.map((c) => (
+                  <button
+                    key={c}
+                    type="button"
+                    onClick={() => pickCategory(c)}
+                    className="flex h-14 items-center justify-center rounded-xl border border-zinc-300 text-base font-medium text-black dark:border-zinc-700 dark:text-white"
+                  >
+                    {c}
+                  </button>
+                ))}
+              </div>
+            }
           </div>
         )}
 
@@ -875,21 +1401,23 @@ function DesignatedPlaceSheet({
   onClose: () => void;
   onSubmit: (place: DesignatedPlace) => void;
 }) {
-  const [name, setName] = useState(initial?.name ?? "");
-  const [address, setAddress] = useState(initial?.address ?? "");
-  const [lat, setLat] = useState(initial?.lat ?? REGION_CENTER.lat);
-  const [lng, setLng] = useState(initial?.lng ?? REGION_CENTER.lng);
+  const [query, setQuery] = useState("");
+  const results = useMemo(() => searchPlaces(query), [query]);
+  const hasQuery = query.trim().length > 0;
 
-  const outsideRegion = !isWithinRegionRange({ lat, lng });
-  const canSubmit = name.trim().length > 0 && address.trim().length > 0;
-
-  function submit(place: DesignatedPlace) {
-    onSubmit(place);
+  function pick(place: DesignatedPlace) {
+    onSubmit({
+      id: initial?.id ?? place.id,
+      name: place.name,
+      address: place.address,
+      lat: place.lat,
+      lng: place.lng,
+    });
   }
 
   return (
     <div className="fixed inset-0 z-20 flex items-end justify-center bg-black/50">
-      <div className="flex max-h-[85vh] w-full max-w-md flex-col gap-4 overflow-y-auto rounded-t-2xl bg-white p-4 dark:bg-zinc-900">
+      <div className="flex h-[85vh] w-full max-w-md flex-col gap-4 overflow-y-auto rounded-t-2xl bg-white p-4 dark:bg-zinc-900">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-bold text-black dark:text-white">
             {initial ? "지정 장소 변경" : "장소 직접 지정"}
@@ -904,93 +1432,93 @@ function DesignatedPlaceSheet({
           </button>
         </div>
 
-        <p className="text-xs text-zinc-500 dark:text-zinc-400">
-          카카오 장소 검색 키 발급 전까지는 직접 입력으로 지정해요. 이름·주소와,
-          대략의 위도·경도(종로 일대는 위도 37.57~37.58, 경도 126.975~126.992)를
-          넣어주세요.
-        </p>
-
-        {recentPlaces.length > 0 && (
-          <div className="flex flex-col gap-2">
-            <span className="text-sm font-medium text-zinc-600 dark:text-zinc-400">
-              최근 지정 장소
-            </span>
-            <ul className="flex flex-col gap-2">
-              {recentPlaces.map((p) => (
-                <li key={p.id}>
-                  <button
-                    type="button"
-                    onClick={() => submit(p)}
-                    className="flex w-full flex-col items-start rounded-lg border border-zinc-300 p-2 text-left dark:border-zinc-700"
-                  >
-                    <span className="text-sm font-medium text-black dark:text-white">
-                      {p.name}
-                    </span>
-                    <span className="text-xs text-zinc-500 dark:text-zinc-400">
-                      {p.address}
-                    </span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-
-        <div className="flex flex-col gap-3">
+        <div className="flex flex-col gap-2">
           <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="이름 (예: 안국역)"
-            className="h-11 w-full rounded-lg border border-zinc-300 bg-white px-3 text-base text-black dark:border-zinc-700 dark:bg-zinc-900 dark:text-white"
+            autoFocus
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="장소 이름 (예: 안국역)"
+            aria-label="장소 이름"
+            className="h-12 w-full rounded-xl border border-zinc-300 bg-white px-4 text-base text-black dark:border-zinc-700 dark:bg-zinc-900 dark:text-white"
           />
-          <input
-            value={address}
-            onChange={(e) => setAddress(e.target.value)}
-            placeholder="주소 (예: 서울 종로구 율곡로 口)"
-            className="h-11 w-full rounded-lg border border-zinc-300 bg-white px-3 text-base text-black dark:border-zinc-700 dark:bg-zinc-900 dark:text-white"
-          />
-          <div className="flex gap-2">
-            <input
-              type="number"
-              step="0.0001"
-              value={lat}
-              onChange={(e) => setLat(Number(e.target.value))}
-              placeholder="위도"
-              className="h-11 w-full rounded-lg border border-zinc-300 bg-white px-3 text-base text-black dark:border-zinc-700 dark:bg-zinc-900 dark:text-white"
-            />
-            <input
-              type="number"
-              step="0.0001"
-              value={lng}
-              onChange={(e) => setLng(Number(e.target.value))}
-              placeholder="경도"
-              className="h-11 w-full rounded-lg border border-zinc-300 bg-white px-3 text-base text-black dark:border-zinc-700 dark:bg-zinc-900 dark:text-white"
-            />
-          </div>
-
-          {outsideRegion && (
-            <p className="text-sm text-amber-600 dark:text-amber-400">
-              이 장소는 코스에 들어가지만, 주변 추천은 종로 일대에서만 돼요.
+          {initial && !hasQuery && (
+            <p className="text-xs text-zinc-500 dark:text-zinc-400">
+              지금 지정된 장소: {initial.name}
             </p>
           )}
-
-          <button
-            type="button"
-            disabled={!canSubmit}
-            onClick={() =>
-              submit({
-                id: initial?.id ?? generateId("designated"),
-                name: name.trim(),
-                address: address.trim(),
-                lat,
-                lng,
-              })
-            }
-            className="h-12 w-full rounded-xl bg-black text-base font-semibold text-white disabled:opacity-30 dark:bg-white dark:text-black"
-          >
-            이 장소로 지정
-          </button>
         </div>
+
+        {hasQuery ? (
+          results.length === 0 ? (
+            <p className="text-sm text-zinc-500 dark:text-zinc-400">
+              검색 결과가 없어요. 다른 이름으로 검색해보세요.
+            </p>
+          ) : (
+            <ul className="flex flex-col gap-2">
+              {results.map((p) => {
+                const outside = !isWithinRegionRange(p);
+                return (
+                  <li key={p.id}>
+                    <button
+                      type="button"
+                      onClick={() => pick(p)}
+                      className="flex w-full flex-col items-start gap-0.5 rounded-xl border border-zinc-300 px-3 py-2.5 text-left dark:border-zinc-700"
+                    >
+                      <span className="flex w-full items-center justify-between gap-2">
+                        <span className="text-base font-medium text-black dark:text-white">
+                          {p.name}
+                        </span>
+                        <span className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">
+                          {p.category}
+                        </span>
+                      </span>
+                      <span className="text-xs text-zinc-500 dark:text-zinc-400">
+                        {p.address}
+                      </span>
+                      {outside && (
+                        <span className="text-xs text-amber-600 dark:text-amber-400">
+                          종로 일대 밖 · 코스에는 들어가지만 주변 추천은 종로
+                          일대에서만 돼요
+                        </span>
+                      )}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )
+        ) : (
+          recentPlaces.length > 0 && (
+            <div className="flex flex-col gap-2">
+              <span className="text-sm font-medium text-zinc-600 dark:text-zinc-400">
+                최근 지정 장소
+              </span>
+              <ul className="flex flex-col gap-2">
+                {recentPlaces.map((p) => (
+                  <li key={p.id}>
+                    <button
+                      type="button"
+                      onClick={() => pick(p)}
+                      className="flex w-full flex-col items-start rounded-xl border border-zinc-300 px-3 py-2.5 text-left dark:border-zinc-700"
+                    >
+                      <span className="text-base font-medium text-black dark:text-white">
+                        {p.name}
+                      </span>
+                      <span className="text-xs text-zinc-500 dark:text-zinc-400">
+                        {p.address}
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )
+        )}
+
+        <p className="mt-auto text-xs text-zinc-400 dark:text-zinc-500">
+          지금은 종로 일대 대표 장소와 예시 장소 안에서만 검색돼요. 네이버 키를
+          연결하면 실제 장소 검색으로 바뀌어요.
+        </p>
       </div>
     </div>
   );
@@ -1144,8 +1672,8 @@ function ResultView({
             {failedStage?.kind === "recommend" &&
               failedStage.closedExcludedCount > 0 && (
                 <p className="text-sm text-zinc-500 dark:text-zinc-400">
-                  일정 날짜에 쉬는 {failedStage.closedExcludedCount}곳은 후보에서
-                  제외됐어요. 날짜를 바꿔보는 것도 방법이에요.
+                  일정 날짜에 쉬는 {failedStage.closedExcludedCount}곳은
+                  후보에서 제외됐어요. 날짜를 바꿔보는 것도 방법이에요.
                 </p>
               )}
           </div>
@@ -1258,12 +1786,12 @@ function ResultView({
                         {stageResult.selected.address}
                       </span>
                       <a
-                        href={kakaoMapLinkFor(stageResult.selected)}
+                        href={naverMapLinkFor(stageResult.selected)}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="text-sm font-medium text-blue-600 dark:text-blue-400"
                       >
-                        카카오맵에서 보기
+                        네이버맵에서 보기
                       </a>
                       <span className="text-sm text-zinc-500 dark:text-zinc-500">
                         🕒 운영 시간 정보 없음
@@ -1869,7 +2397,7 @@ function StubMap({
       {zoomPan.isZoomed && <ZoomResetButton onClick={zoomPan.reset} />}
 
       <p className="pointer-events-none absolute bottom-1 right-2 text-[10px] text-zinc-400 dark:text-zinc-500">
-        지도 임시 표시 · 카카오맵 연동 전
+        지도 임시 표시 · 네이버맵 연동 전
       </p>
     </div>
   );
@@ -1992,7 +2520,7 @@ function RouteMap({
       {zoomPan.isZoomed && <ZoomResetButton onClick={zoomPan.reset} />}
 
       <p className="pointer-events-none absolute bottom-1 right-2 text-[10px] text-zinc-400 dark:text-zinc-500">
-        지도 임시 표시 · 카카오맵 연동 전
+        지도 임시 표시 · 네이버맵 연동 전
       </p>
     </div>
   );
@@ -2061,9 +2589,9 @@ function LoginScreen({ onLogin }: { onLogin: () => void }) {
         <button
           type="button"
           onClick={onLogin}
-          className="h-14 w-full rounded-xl bg-[#FEE500] text-base font-semibold text-black"
+          className="h-14 w-full rounded-xl bg-[#03C75A] text-base font-semibold text-white"
         >
-          카카오로 로그인
+          네이버로 로그인
         </button>
         <button
           type="button"
