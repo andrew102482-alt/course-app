@@ -1933,7 +1933,7 @@ function DesignatedPlaceSheet({
               type="button"
               onClick={() => pick(pendingPlace)}
               aria-label={`${pendingPlace.name} 지정하기`}
-              className="flex w-full items-center justify-between gap-2 rounded-xl border-2 border-black px-3 py-2.5 text-left dark:border-white"
+              className="flex w-full items-center rounded-xl border-2 border-black px-3 py-2.5 text-left dark:border-white"
             >
               <span className="flex min-w-0 flex-col items-start gap-0.5">
                 <span className="text-base font-medium text-black dark:text-white">
@@ -1948,9 +1948,6 @@ function DesignatedPlaceSheet({
                     일대에서만 돼요
                   </span>
                 )}
-              </span>
-              <span className="shrink-0 rounded-lg bg-black px-3 py-1.5 text-sm font-semibold text-white dark:bg-white dark:text-black">
-                지정
               </span>
             </button>
           </div>
