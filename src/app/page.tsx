@@ -287,12 +287,6 @@ function loadMeetTimes(): { start: number | null; end: number | null } {
   return { start: null, end: null };
 }
 
-function positionLabel(index: number, total: number): "출발" | "경유" | "도착" {
-  if (index === 0) return "출발";
-  if (index === total - 1) return "도착";
-  return "경유";
-}
-
 function CourseBuilder() {
   const [stages, setStages] = useState<Stage[]>([]);
   const [maxTravelMinutes, setMaxTravelMinutes] = useState(
@@ -2189,15 +2183,15 @@ function ResultView({
             <div className="flex min-w-0 flex-1 flex-col gap-2">
               <div className="flex flex-1 items-center gap-1">
                 {handle}
-                <div className="flex flex-col gap-1">
-                  {!stageResult.stage.isOrigin && (
-                    <span className="w-fit rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
-                      지정 · {positionLabel(index, result.stages.length)}
-                    </span>
-                  )}
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                   <span className="text-lg font-semibold text-black dark:text-white">
                     {stageResult.selected.name}
                   </span>
+                  {!stageResult.stage.isOrigin && (
+                    <span className="w-fit rounded-full border border-zinc-300 bg-zinc-100 px-2.5 py-0.5 text-xs font-medium text-zinc-700 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-200">
+                      지정
+                    </span>
+                  )}
                 </div>
               </div>
               <span className="text-sm text-zinc-500 dark:text-zinc-500">
