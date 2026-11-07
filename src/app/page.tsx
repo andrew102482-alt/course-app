@@ -33,6 +33,7 @@ import NaverMapCanvas, {
 } from "@/components/NaverMapCanvas";
 import { useNaverMaps } from "@/lib/useNaverMaps";
 import { useRoadPaths } from "@/lib/useRoadPaths";
+import { computeProgress, formatMeters, turnIcon } from "@/lib/guidance";
 import { buildAiRequest, type AiPicks } from "@/lib/aiRecommend";
 import { saveCourse, toSavedCourse } from "@/lib/savedCourses";
 import { AvatarCustomizer, AvatarFigure } from "./AvatarCustomizer";
@@ -822,6 +823,7 @@ function CourseBuilder() {
       <NavigateView
         result={result}
         avatarPoint={avatarPoint}
+        locationKnown={location !== null}
         onBack={() => setNavigating(false)}
         onEnd={() => {
           setNavigating(false);
@@ -3554,7 +3556,7 @@ function RouteMap({
   const legPairs = points.slice(1).map((p, i) => ({ from: points[i], to: p }));
   const approachLeg =
     showApproach && avatarPoint && points[0]
-      ? { from: avatarPoint, to: points[0] }
+      ? { from: avatarPoint, to: points[0], coarse: true }
       : null;
   const roadPaths = useRoadPaths(
     approachLeg ? [...legPairs, approachLeg] : legPairs,
@@ -3748,16 +3750,35 @@ function RouteMap({
 function NavigateView({
   result,
   avatarPoint,
+  locationKnown,
   onBack,
   onEnd,
 }: {
   result: CourseResult;
   avatarPoint: { lat: number; lng: number };
+  /** false면 위치 권한이 없어 종로 중심을 내 위치로 대신 쓰는 중. */
+  locationKnown: boolean;
   onBack: () => void;
   onEnd: () => void;
 }) {
   // 체크하면 "내 위치 → 출발지" 길 안내 동선을 끈다(기본은 켜짐).
   const [approachOff, setApproachOff] = useState(false);
+  // 내 위치 → 출발지(첫 장소) 도보 길 안내. RouteMap이 같은 구간을 그리므로 같은 캐시를 쓴다.
+  const maps = useNaverMaps();
+  const origin = result.stages.find((s) => s.selected !== null)?.selected;
+  const approach = useRoadPaths(
+    origin ? [{ from: avatarPoint, to: origin, coarse: true }] : [],
+    maps === "ready" && !!origin,
+  )[0];
+  const progress =
+    approach && !approachOff
+      ? computeProgress(
+          approach.path,
+          approach.steps,
+          avatarPoint,
+          approach.minutes,
+        )
+      : null;
   // 뒤로가기를 누르면 "안내를 멈출까요?" 확인 창을 먼저 띄운다.
   const [askStop, setAskStop] = useState(false);
   // 종료를 누르면 "안내를 종료할까요?" → "추억에 저장할까요?" 순서로 묻는다.
@@ -3800,6 +3821,50 @@ function NavigateView({
           출발지까지 동선 끄기
         </label>
       </div>
+
+      {!approachOff && origin && (
+        <div
+          role="status"
+          aria-label="출발지까지 길 안내"
+          className="absolute inset-x-3 bottom-3 z-10 rounded-2xl bg-white/95 p-4 shadow-lg dark:bg-zinc-900/95"
+        >
+          <p className="text-xs font-medium text-zinc-500 dark:text-zinc-400">
+            출발지({origin.name})까지 길 안내
+            {!locationKnown && " · 위치 권한이 없어 종로 중심에서 안내 중"}
+          </p>
+          {!progress ? (
+            <p className="mt-1 text-base font-semibold text-black dark:text-white">
+              길을 찾는 중이에요…
+            </p>
+          ) : progress.arrived ? (
+            <p className="mt-1 text-lg font-bold text-black dark:text-white">
+              📍 출발지에 도착했어요
+            </p>
+          ) : (
+            <>
+              <p className="mt-1 flex items-center gap-2 text-lg font-bold text-black dark:text-white">
+                <span aria-hidden>
+                  {progress.next ? turnIcon(progress.next.step.turn) : "⬆️"}
+                </span>
+                <span>
+                  {progress.next
+                    ? `${formatMeters(progress.next.meters)} 앞 · ${progress.next.step.text}`
+                    : "길을 따라 계속 가세요"}
+                </span>
+              </p>
+              <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
+                남은 거리 {formatMeters(progress.remainingMeters)} · 약{" "}
+                {Math.max(1, Math.round(progress.remainingMinutes))}분
+              </p>
+              {progress.offRoute && (
+                <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
+                  길에서 벗어났어요. 새 길을 찾는 중이에요…
+                </p>
+              )}
+            </>
+          )}
+        </div>
+      )}
 
       {askEnd && (
         <div

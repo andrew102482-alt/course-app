@@ -9,7 +9,7 @@ export async function GET(request: Request) {
   const start = params.get("start") ?? "";
   const goal = params.get("goal") ?? "";
   const key = process.env.TMAP_APP_KEY;
-  const none = { path: null, minutes: null, meters: null };
+  const none = { path: null, minutes: null, meters: null, steps: [] };
   if (!COORD.test(start) || !COORD.test(goal) || !key) {
     return NextResponse.json(none);
   }
@@ -39,7 +39,12 @@ export async function GET(request: Request) {
     const data = (await res.json()) as {
       features?: {
         geometry: { type: string; coordinates: unknown };
-        properties: { totalTime?: number; totalDistance?: number };
+        properties: {
+          totalTime?: number;
+          totalDistance?: number;
+          description?: string;
+          turnType?: number;
+        };
       }[];
     };
     const features = data.features ?? [];
@@ -54,11 +59,25 @@ export async function GET(request: Request) {
         if (!last || last[0] !== lat || last[1] !== lng) path.push([lat, lng]);
       }
     }
+    // 턴 안내(좌회전·횡단보도 등): 점 지점마다 안내 문구와 종류가 들어 있다.
+    const steps: { lat: number; lng: number; text: string; turn: number }[] =
+      [];
+    for (const f of features) {
+      if (f.geometry.type !== "Point" || !f.properties.description) continue;
+      const [lng, lat] = f.geometry.coordinates as [number, number];
+      steps.push({
+        lat,
+        lng,
+        text: f.properties.description,
+        turn: f.properties.turnType ?? 0,
+      });
+    }
     if (path.length < 2) return NextResponse.json(none);
     return NextResponse.json({
       path,
       minutes: summary?.totalTime ? summary.totalTime / 60 : null,
       meters: summary?.totalDistance ?? null,
+      steps,
     });
   } catch {
     return NextResponse.json(none);
