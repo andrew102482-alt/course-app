@@ -2910,7 +2910,7 @@ function useZoomPan() {
         translate,
         pinch.scale * (distance / pinch.distance),
       );
-    } else if (pointers.current.size === 1 && panRef.current && scale > 1) {
+    } else if (pointers.current.size === 1 && panRef.current) {
       setTranslate({
         x: panRef.current.translate.x + (e.clientX - panRef.current.x),
         y: panRef.current.translate.y + (e.clientY - panRef.current.y),
@@ -2939,7 +2939,8 @@ function useZoomPan() {
     {
       scale,
       translate,
-      isZoomed: scale > 1.001,
+      isZoomed:
+        scale > 1.001 || Math.abs(translate.x) + Math.abs(translate.y) > 1,
       handlers: { onPointerDown, onPointerMove, onPointerUp },
       reset,
     },
@@ -3276,7 +3277,7 @@ function StubMap({
       <svg
         ref={zoomSvgRef}
         viewBox={`0 0 ${MAP_VIEW_SIZE} ${MAP_VIEW_SIZE}`}
-        className={`h-full w-full ${zoomPan.scale > 1 ? "cursor-grab active:cursor-grabbing" : ""}`}
+        className="h-full w-full cursor-grab active:cursor-grabbing"
         style={{
           touchAction: "none",
           transform: `translate(${zoomPan.translate.x}px, ${zoomPan.translate.y}px) scale(${zoomPan.scale})`,
@@ -3535,7 +3536,7 @@ function RouteMap({
       <svg
         ref={zoomSvgRef}
         viewBox={`0 0 ${MAP_VIEW_SIZE} ${MAP_VIEW_SIZE}`}
-        className={`h-full w-full ${zoomPan.scale > 1 ? "cursor-grab active:cursor-grabbing" : ""}`}
+        className="h-full w-full cursor-grab active:cursor-grabbing"
         style={{
           touchAction: "none",
           transform: `translate(${zoomPan.translate.x}px, ${zoomPan.translate.y}px) scale(${zoomPan.scale})`,
