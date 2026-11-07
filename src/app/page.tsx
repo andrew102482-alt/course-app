@@ -22,6 +22,18 @@ import {
   type StageResult,
 } from "@/lib/course";
 import { searchPlaces } from "@/lib/placeSearch";
+import { buildAiRequest, type AiPicks } from "@/lib/aiRecommend";
+import { saveCourse, toSavedCourse } from "@/lib/savedCourses";
+import { AvatarCustomizer, AvatarFigure } from "./AvatarCustomizer";
+import { PrivacyPolicySheet } from "./PrivacyPolicySheet";
+import {
+  DEFAULT_AVATAR,
+  MAX_NICKNAME_LENGTH,
+  loadAvatar,
+  loadNickname,
+  saveNickname,
+  type Avatar,
+} from "./avatar";
 
 const CATEGORIES: PlaceCategory[] = [
   "문화 생활",
@@ -277,6 +289,9 @@ function CourseBuilder() {
   const [hydrated, setHydrated] = useState(false);
   const [showResult, setShowResult] = useState(false);
   const [overrides, setOverrides] = useState<StageOverrides>({});
+  // AI에게 코스를 물어보는 중인지, 그리고 실패했을 때 잠깐 띄울 안내 문구.
+  const [makingCourse, setMakingCourse] = useState(false);
+  const [aiMessage, setAiMessage] = useState<string | null>(null);
   const [addSheetOpen, setAddSheetOpen] = useState(false);
   // 일정 칸의 "변경"을 누르면 단계 추가와 같은 창이 뜨고, 고른 것으로 그 칸이 바뀐다. 바꿀 칸의 id.
   const [changeStageTarget, setChangeStageTarget] = useState<string | null>(
@@ -470,9 +485,103 @@ function CourseBuilder() {
     setStages((prev) => prev.filter((s) => s.id !== id || s.isOrigin));
   }
 
-  function makeCourse() {
+  async function postRecommend<T>(body: unknown): Promise<T> {
+    const res = await fetch("/api/recommend", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw new Error("ai-failed");
+    return (await res.json()) as T;
+  }
+
+  function showAiMessage(message: string) {
+    setAiMessage(message);
+    window.setTimeout(() => setAiMessage(null), 4000);
+  }
+
+  /**
+   * - 일정 단계가 하나도 없으면: AI가 분위기 글·시간으로 단계부터 짜고, 그 단계에 맞는 장소도 고른다.
+   *   AI가 실패하면 결과로 넘어가지 않고 안내만 띄운다(보여줄 단계가 없으므로).
+   * - 단계가 있고 분위기 글·시간 중 하나라도 있으면: AI가 기본 추천 후보 중에서 장소를 고른다.
+   *   실패하면 기본 추천(평점·거리 점수)으로 보여준다.
+   */
+  async function makeCourse() {
     setOverrides({});
-    setShowResult(true);
+    const aiInput = {
+      themeNote,
+      startHour,
+      endHour,
+      planDate: planDate || undefined,
+    };
+    const needsPlan = !stages.some((s) => !s.isOrigin && !isUnsetStage(s));
+    const wantsAi =
+      needsPlan ||
+      themeNote.trim().length > 0 ||
+      startHour !== null ||
+      endHour !== null;
+    let working = stages.filter((s) => !isUnsetStage(s));
+    if (
+      !wantsAi ||
+      (!needsPlan && !working.some((s) => s.kind === "recommend"))
+    ) {
+      setShowResult(true);
+      return;
+    }
+
+    setMakingCourse(true);
+    setAiMessage(null);
+    try {
+      if (needsPlan) {
+        let planned: { category: PlaceCategory; subCategory?: string }[];
+        try {
+          const data = await postRecommend<{
+            stages?: { category: PlaceCategory; subCategory?: string }[];
+          }>({ mode: "plan", ...aiInput });
+          planned = data.stages ?? [];
+          if (planned.length === 0) throw new Error("plan-empty");
+        } catch {
+          showAiMessage(
+            "AI가 단계를 짜지 못했어요. 단계를 직접 추가해 보세요.",
+          );
+          return;
+        }
+        const newStages: Stage[] = planned
+          .slice(0, MAX_STAGES - 1)
+          .map((p) => ({
+            id: generateId("stage"),
+            kind: "recommend" as const,
+            category: p.category,
+            subCategory: p.subCategory,
+          }));
+        // 출발지는 그대로 두고, 이어서 AI가 짠 단계를 붙인다(비어 있던 지정 단계는 대체).
+        setStages((prev) => [...prev.filter((s) => s.isOrigin), ...newStages]);
+        working = [...stages.filter((s) => s.isOrigin), ...newStages].filter(
+          (s) => !isUnsetStage(s),
+        );
+      }
+
+      try {
+        const baseline = buildCourse(
+          working,
+          places,
+          maxTravelMinutes,
+          {},
+          planDate,
+        );
+        const data = await postRecommend<{ picks?: AiPicks }>(
+          buildAiRequest(baseline, aiInput),
+        );
+        const picks = data.picks ?? {};
+        if (Object.keys(picks).length === 0) throw new Error("ai-empty");
+        setOverrides(picks);
+      } catch {
+        showAiMessage("AI 추천을 불러오지 못해 기본 추천으로 보여드려요.");
+      }
+      setShowResult(true);
+    } finally {
+      setMakingCourse(false);
+    }
   }
 
   function replaceRecommendStage(stageId: string, placeId: string) {
@@ -552,8 +661,18 @@ function CourseBuilder() {
               setChangeStageTarget(stageId)
             }
             onMakeCourse={makeCourse}
+            makingCourse={makingCourse}
             onBackToHome={() => setOnHome(true)}
           />
+        </div>
+      )}
+
+      {aiMessage && (
+        <div
+          role="status"
+          className="fixed inset-x-4 top-4 z-50 mx-auto max-w-md rounded-xl bg-amber-100 px-4 py-3 text-center text-sm text-amber-900 shadow-lg dark:bg-amber-900 dark:text-amber-100"
+        >
+          {aiMessage}
         </div>
       )}
 
@@ -649,6 +768,7 @@ function InputView({
   onReorderStages,
   onRequestChangeDesignated,
   onMakeCourse,
+  makingCourse,
   onBackToHome,
 }: {
   planDate: string;
@@ -667,14 +787,14 @@ function InputView({
   onReorderStages: (stages: Stage[]) => void;
   onRequestChangeDesignated: (stageId: string) => void;
   onMakeCourse: () => void;
+  makingCourse: boolean;
   onBackToHome: () => void;
 }) {
   const [travelPickerOpen, setTravelPickerOpen] = useState(false);
   const [timePicker, setTimePicker] = useState<"start" | "end" | null>(null);
-  const [aiNotice, setAiNotice] = useState(false);
   const hasNote = themeNote.trim().length > 0;
 
-  // 단계가 없으면 AI가 짜주는 흐름(아직 준비 중), 있으면 지금처럼 바로 코스를 만든다.
+  // 단계가 없으면 AI가 단계부터 짜 주고, 있으면 그 단계로 코스를 만든다.
   const origin = stages.find((s) => s.isOrigin);
   const others = stages.filter((s) => !s.isOrigin);
   const hasOthers = others.some((s) => !isUnsetStage(s));
@@ -685,12 +805,7 @@ function InputView({
       : "AI에게 코스 추천받기";
 
   function onPressMake() {
-    if (hasOthers) {
-      setAiNotice(false);
-      onMakeCourse();
-    } else {
-      setAiNotice(true);
-    }
+    onMakeCourse();
   }
 
   return (
@@ -891,17 +1006,13 @@ function InputView({
       )}
 
       <div className="sticky bottom-0 -mx-4 mt-auto flex flex-col gap-2 bg-white/95 px-4 pb-6 pt-3 backdrop-blur dark:bg-black/95">
-        {aiNotice && !hasOthers && (
-          <p className="text-center text-sm text-amber-600 dark:text-amber-400">
-            AI 추천은 아직 준비 중이에요. 위에서 단계를 직접 추가해보세요.
-          </p>
-        )}
         <button
           type="button"
           onClick={onPressMake}
-          className="h-14 w-full rounded-xl bg-black text-lg font-semibold text-white dark:bg-white dark:text-black"
+          disabled={makingCourse}
+          className="h-14 w-full rounded-xl bg-black text-lg font-semibold text-white disabled:opacity-60 dark:bg-white dark:text-black"
         >
-          {makeLabel}
+          {makingCourse ? "AI가 코스를 짜는 중…" : makeLabel}
         </button>
       </div>
     </div>
@@ -1604,6 +1715,17 @@ function ResultView({
   onDecideRoute: () => void;
 }) {
   const [openStageId, setOpenStageId] = useState<string | null>(null);
+  // 코스를 바꾸면(장소 교체 등) 저장 상태를 처음으로 되돌리기 위해 어떤 결과를 저장했는지 함께 기억한다.
+  const [saveStatus, setSaveStatus] = useState<{
+    result: CourseResult;
+    ok: boolean;
+  } | null>(null);
+  const saveState =
+    saveStatus?.result === result
+      ? saveStatus.ok
+        ? "saved"
+        : "failed"
+      : "idle";
   const bodyRef = useRef<HTMLDivElement>(null);
   const split = useResizableSplit(DEFAULT_LIST_RATIO, bodyRef);
   const openStageIndex = result.stages.findIndex(
@@ -1806,14 +1928,38 @@ function ResultView({
       )}
 
       {result.success && (
-        <div className="mx-auto w-full max-w-md shrink-0 p-4 pt-0">
-          <button
-            type="button"
-            onClick={onDecideRoute}
-            className="h-14 w-full rounded-xl bg-black text-lg font-semibold text-white dark:bg-white dark:text-black"
-          >
-            동선 결정!
-          </button>
+        <div className="mx-auto flex w-full max-w-md shrink-0 flex-col gap-2 p-4 pt-0">
+          {saveState === "failed" && (
+            <p
+              role="alert"
+              className="text-center text-sm text-red-600 dark:text-red-400"
+            >
+              저장하지 못했어요. 브라우저 저장 공간을 확인해 주세요.
+            </p>
+          )}
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                const course = toSavedCourse(result);
+                setSaveStatus({
+                  result,
+                  ok: course ? saveCourse(course) : false,
+                });
+              }}
+              disabled={saveState === "saved"}
+              className="h-14 flex-1 rounded-xl border border-zinc-300 text-lg font-semibold text-black disabled:opacity-60 dark:border-zinc-700 dark:text-white"
+            >
+              {saveState === "saved" ? "저장됨 ✓" : "동선 저장"}
+            </button>
+            <button
+              type="button"
+              onClick={onDecideRoute}
+              className="h-14 flex-1 rounded-xl bg-black text-lg font-semibold text-white dark:bg-white dark:text-black"
+            >
+              이동 시작!
+            </button>
+          </div>
         </div>
       )}
 
@@ -2564,16 +2710,45 @@ function NavigateView({
 type LocationStatus = "idle" | "loading" | "granted" | "denied" | "unsupported";
 
 export default function Home() {
-  const [loggedIn, setLoggedIn] = useState(false);
+  // checking: 로그인 상태 확인 중, out: 로그인 화면, in: 로그인(또는 둘러보기) 완료
+  const [auth, setAuth] = useState<"checking" | "out" | "in">("checking");
+  const [loginError, setLoginError] = useState(false);
 
-  if (!loggedIn) {
-    return <LoginScreen onLogin={() => setLoggedIn(true)} />;
+  useEffect(() => {
+    // 네이버 로그인 후 돌아왔는지(쿠키) 서버에 물어본다. 실패해도 로그인 화면으로 간다.
+    fetch("/api/auth/me")
+      .then((res) => (res.ok ? res.json() : { user: null }))
+      .catch(() => ({ user: null }))
+      .then((data: { user: { name: string } | null }) => {
+        const params = new URLSearchParams(window.location.search);
+        if (params.get("login") === "error") {
+          setLoginError(true);
+          window.history.replaceState(null, "", "/");
+        }
+        setAuth(data.user ? "in" : "out");
+      });
+  }, []);
+
+  if (auth === "checking") {
+    return <div className="h-screen w-full bg-white dark:bg-black" />;
+  }
+
+  if (auth === "out") {
+    return (
+      <LoginScreen loginError={loginError} onGuest={() => setAuth("in")} />
+    );
   }
 
   return <CourseBuilder />;
 }
 
-function LoginScreen({ onLogin }: { onLogin: () => void }) {
+function LoginScreen({
+  loginError,
+  onGuest,
+}: {
+  loginError: boolean;
+  onGuest: () => void;
+}) {
   return (
     <div className="flex h-screen w-full flex-col items-center justify-center gap-10 bg-white px-6 dark:bg-black">
       <div className="flex flex-col items-center gap-2 text-center">
@@ -2586,26 +2761,28 @@ function LoginScreen({ onLogin }: { onLogin: () => void }) {
       </div>
 
       <div className="flex w-full max-w-xs flex-col gap-3">
-        <button
-          type="button"
-          onClick={onLogin}
-          className="h-14 w-full rounded-xl bg-[#03C75A] text-base font-semibold text-white"
+        {loginError && (
+          <p
+            role="alert"
+            className="text-center text-sm text-red-600 dark:text-red-400"
+          >
+            네이버 로그인에 실패했어요. 다시 시도해 주세요.
+          </p>
+        )}
+        <a
+          href="/api/auth/naver/login"
+          className="flex h-14 w-full items-center justify-center rounded-xl bg-[#03C75A] text-base font-semibold text-white"
         >
           네이버로 로그인
-        </button>
+        </a>
         <button
           type="button"
-          onClick={onLogin}
+          onClick={onGuest}
           className="h-14 w-full rounded-xl border border-zinc-300 text-base font-semibold text-black dark:border-zinc-700 dark:text-white"
         >
           로그인 없이 둘러보기
         </button>
       </div>
-
-      <p className="max-w-xs text-center text-xs text-zinc-400 dark:text-zinc-500">
-        로그인 기능은 아직 준비 중이에요. 버튼을 누르면 체험용으로 바로
-        시작돼요.
-      </p>
     </div>
   );
 }
@@ -2620,6 +2797,15 @@ function AvatarScene({
 }) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [friendsOpen, setFriendsOpen] = useState(false);
+  const [customizeOpen, setCustomizeOpen] = useState(false);
+  const [avatar, setAvatar] = useState<Avatar>(DEFAULT_AVATAR);
+
+  useEffect(() => {
+    // localStorage는 브라우저에서만 읽을 수 있어 마운트 후에 한 번 불러온다.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setAvatar(loadAvatar());
+  }, []);
+
   const statusText =
     status === "loading"
       ? "내 위치 확인하는 중..."
@@ -2649,7 +2835,7 @@ function AvatarScene({
       <span className="absolute bottom-[11%] left-[57%] text-xl">🪵</span>
 
       <div className="absolute bottom-[13%] left-[40%] flex flex-col items-center">
-        <span className="text-5xl">🧘</span>
+        <AvatarFigure avatar={avatar} />
         <span className="-mt-1 text-2xl">🪵</span>
       </div>
 
@@ -2678,10 +2864,11 @@ function AvatarScene({
         </button>
         <button
           type="button"
-          aria-label="아바타"
+          aria-label="아바타 꾸미기"
+          onClick={() => setCustomizeOpen(true)}
           className="flex h-8 w-8 items-center justify-center rounded-full bg-white/80 text-sm shadow-sm dark:bg-black/40"
         >
-          🧑
+          {avatar.character}
         </button>
       </div>
 
@@ -2695,6 +2882,13 @@ function AvatarScene({
 
       {settingsOpen && <SettingsSheet onClose={() => setSettingsOpen(false)} />}
       {friendsOpen && <FriendsSheet onClose={() => setFriendsOpen(false)} />}
+      {customizeOpen && (
+        <AvatarCustomizer
+          initial={avatar}
+          onChange={setAvatar}
+          onClose={() => setCustomizeOpen(false)}
+        />
+      )}
     </div>
   );
 }
@@ -3074,12 +3268,33 @@ function GroupView({ onBack }: { onBack: () => void }) {
 function SettingsSheet({ onClose }: { onClose: () => void }) {
   const [code, setCode] = useState("");
   const [copied, setCopied] = useState(false);
+  const [nickname, setNickname] = useState("");
+  const [nicknameSaved, setNicknameSaved] = useState(false);
+  const [privacyOpen, setPrivacyOpen] = useState(false);
 
   useEffect(() => {
     // localStorage는 브라우저에서만 읽을 수 있어 마운트 후에 한 번 불러온다.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setCode(loadOrCreatePersonalCode());
+    setNickname(loadNickname());
   }, []);
+
+  function commitNickname() {
+    const trimmed = nickname.trim();
+    setNickname(trimmed);
+    saveNickname(trimmed);
+    setNicknameSaved(true);
+    window.setTimeout(() => setNicknameSaved(false), 1500);
+  }
+
+  async function logout() {
+    try {
+      await fetch("/api/auth/logout", { method: "POST" });
+    } catch {
+      // 요청이 실패해도 새로고침하면 로그인 확인부터 다시 한다.
+    }
+    window.location.reload();
+  }
 
   async function copy() {
     try {
@@ -3107,6 +3322,39 @@ function SettingsSheet({ onClose }: { onClose: () => void }) {
         </div>
 
         <div className="flex flex-col gap-2">
+          <label
+            htmlFor="nickname"
+            className="text-sm font-medium text-zinc-600 dark:text-zinc-400"
+          >
+            닉네임
+          </label>
+          <div className="flex items-center gap-2">
+            <input
+              id="nickname"
+              value={nickname}
+              maxLength={MAX_NICKNAME_LENGTH}
+              onChange={(e) => setNickname(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") commitNickname();
+              }}
+              placeholder="닉네임을 입력하세요"
+              className="h-12 min-w-0 flex-1 rounded-lg border border-zinc-300 bg-transparent px-3 text-base text-black dark:border-zinc-700 dark:text-white"
+            />
+            <button
+              type="button"
+              onClick={commitNickname}
+              className="h-12 rounded-lg bg-black px-4 text-sm font-semibold text-white dark:bg-white dark:text-black"
+            >
+              {nicknameSaved ? "저장됨" : "저장"}
+            </button>
+          </div>
+          <p className="text-xs text-zinc-500 dark:text-zinc-400">
+            최대 {MAX_NICKNAME_LENGTH}자예요. 나중에 그룹에서 내 이름으로
+            보여요.
+          </p>
+        </div>
+
+        <div className="flex flex-col gap-2">
           <span className="text-sm font-medium text-zinc-600 dark:text-zinc-400">
             개인 코드
           </span>
@@ -3131,7 +3379,26 @@ function SettingsSheet({ onClose }: { onClose: () => void }) {
             있어요.
           </p>
         </div>
+
+        <button
+          type="button"
+          onClick={() => setPrivacyOpen(true)}
+          className="h-12 w-full rounded-lg border border-zinc-300 text-sm font-semibold text-black dark:border-zinc-700 dark:text-white"
+        >
+          개인정보처리방침
+        </button>
+
+        <button
+          type="button"
+          onClick={logout}
+          className="h-12 w-full rounded-lg border border-zinc-300 text-sm font-semibold text-black dark:border-zinc-700 dark:text-white"
+        >
+          로그아웃
+        </button>
       </div>
+      {privacyOpen && (
+        <PrivacyPolicySheet onClose={() => setPrivacyOpen(false)} />
+      )}
     </div>
   );
 }

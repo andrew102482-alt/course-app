@@ -88,11 +88,26 @@ test("'전시 → 맛집(일식) → 카페' 코스는 15분 기준으로 3곳�
 });
 
 test("최대 이동시간을 넘는 후보는 자동 선택에서 제외되지만, 교체용 후보 목록에는 '초과' 표시로 남아있다", () => {
-  const near = place({ id: "near", category: "카페", lat: 37.5742, lng: 126.9845, rating: 3.5 });
-  const far = place({ id: "far", category: "카페", lat: 37.65, lng: 126.9845, rating: 4.9 });
+  const near = place({
+    id: "near",
+    category: "카페",
+    lat: 37.5742,
+    lng: 126.9845,
+    rating: 3.5,
+  });
+  const far = place({
+    id: "far",
+    category: "카페",
+    lat: 37.65,
+    lng: 126.9845,
+    rating: 4.9,
+  });
   const start = place({ id: "start", category: "문화 생활" });
 
-  const stages: Stage[] = [recommend("s1", "문화 생활"), recommend("s2", "카페")];
+  const stages: Stage[] = [
+    recommend("s1", "문화 생활"),
+    recommend("s2", "카페"),
+  ];
   const result = buildCourse(stages, [start, near, far], 15);
 
   const s2 = result.stages[1];
@@ -133,7 +148,10 @@ test("overrides로 지정한 장소는 최대 이동시간을 넘어도 강제�
   const near = place({ id: "near", category: "카페", rating: 3.5 });
   const far = place({ id: "far", category: "카페", lat: 37.65, rating: 4.9 });
 
-  const stages: Stage[] = [recommend("s1", "문화 생활"), recommend("s2", "카페")];
+  const stages: Stage[] = [
+    recommend("s1", "문화 생활"),
+    recommend("s2", "카페"),
+  ];
   const result = buildCourse(stages, [start, near, far], 15, { s2: "far" });
 
   assert.equal(result.stages[1].selected?.id, "far");
@@ -163,7 +181,12 @@ test("이미 선택된 장소는 다음 단계 후보에서 제외된다", () =>
 
 test("출발지만 지정한 경우: 지정 장소는 그대로 들어가고 다음 추천 단계는 그 장소를 기준으로 계산한다", () => {
   const start = designated("start", { lat: 37.5742, lng: 126.9845 });
-  const near = place({ id: "near", category: "문화 생활", lat: 37.5745, lng: 126.985 });
+  const near = place({
+    id: "near",
+    category: "문화 생활",
+    lat: 37.5745,
+    lng: 126.985,
+  });
 
   const stages: Stage[] = [start, recommend("s2", "문화 생활")];
   const result = buildCourse(stages, [near], 15);
@@ -177,7 +200,12 @@ test("출발지만 지정한 경우: 지정 장소는 그대로 들어가고 다
 
 test("중간에 지정 장소가 있으면, 그 앞 추천 단계는 이전 장소와 지정 장소 양쪽 기준으로 고른다", () => {
   // mid는 전시 후보 바로 옆, far전시는 지정 장소에서 멀리 떨어져 있어 양쪽 조건을 만족 못 한다.
-  const start = place({ id: "start", category: "맛집", lat: 37.5742, lng: 126.9845 });
+  const start = place({
+    id: "start",
+    category: "맛집",
+    lat: 37.5742,
+    lng: 126.9845,
+  });
   const midDesignated = designated("mid", { lat: 37.5745, lng: 126.985 });
   const nearExhibit = place({
     id: "near-exhibit",
@@ -220,12 +248,26 @@ test("지정 장소끼리 바로 이어진 구간이 최대 이동시간을 넘�
 });
 
 test("추천 단계가 다음 지정 장소 때문에 막히면 blockedByDesignated가 true다", () => {
-  const start = place({ id: "start", category: "문화 생활", lat: 37.5742, lng: 126.9845 });
+  const start = place({
+    id: "start",
+    category: "문화 생활",
+    lat: 37.5742,
+    lng: 126.9845,
+  });
   // near는 start와는 가깝지만 지정 장소와는 멀다.
-  const near = place({ id: "near", category: "맛집", lat: 37.5745, lng: 126.985 });
+  const near = place({
+    id: "near",
+    category: "맛집",
+    lat: 37.5745,
+    lng: 126.985,
+  });
   const farDesignated = designated("far", { lat: 37.65, lng: 126.9845 });
 
-  const stages: Stage[] = [recommend("s1", "문화 생활"), recommend("s2", "맛집"), farDesignated];
+  const stages: Stage[] = [
+    recommend("s1", "문화 생활"),
+    recommend("s2", "맛집"),
+    farDesignated,
+  ];
   const result = buildCourse(stages, [start, near], 15);
 
   assert.equal(result.success, false);
@@ -237,7 +279,11 @@ test("추천 단계가 다음 지정 장소 때문에 막히면 blockedByDesigna
 
 test("isWithinRegionRange: 종로 예시 데이터는 모두 1차 추천 범위 안에 있다", () => {
   for (const p of places) {
-    assert.equal(isWithinRegionRange(p), true, `${p.name}이 범위 밖으로 판정됨`);
+    assert.equal(
+      isWithinRegionRange(p),
+      true,
+      `${p.name}이 범위 밖으로 판정됨`,
+    );
   }
   assert.equal(isWithinRegionRange({ lat: 37.5, lng: 127.1 }), false);
 });
@@ -248,14 +294,29 @@ test("일정 날짜가 휴무 요일인 장소는 추천 후보에서 자동 제
   const open = place({ id: "open", rating: 4.0 });
   const stages: Stage[] = [recommend("s1", "맛집")];
 
-  const monday = buildCourse(stages, [closedMonday, open], 15, {}, "2026-11-02");
+  const monday = buildCourse(
+    stages,
+    [closedMonday, open],
+    15,
+    {},
+    "2026-11-02",
+  );
   const s1 = monday.stages[0];
   assert.ok(s1.kind === "recommend");
   assert.equal(s1.selected?.id, "open");
-  assert.deepEqual(s1.candidates.map((c) => c.place.id), ["open"]);
+  assert.deepEqual(
+    s1.candidates.map((c) => c.place.id),
+    ["open"],
+  );
   assert.equal(s1.closedExcludedCount, 1);
 
-  const tuesday = buildCourse(stages, [closedMonday, open], 15, {}, "2026-11-03");
+  const tuesday = buildCourse(
+    stages,
+    [closedMonday, open],
+    15,
+    {},
+    "2026-11-03",
+  );
   const t1 = tuesday.stages[0];
   assert.ok(t1.kind === "recommend");
   assert.equal(t1.selected?.id, "closed");
@@ -272,7 +333,13 @@ test("일정 날짜가 없으면 휴무 요일을 따지지 않는다", () => {
 
 test("휴무라서 후보가 모두 빠지면 결과 없음이 되고 제외된 수가 남는다", () => {
   const closedMonday = place({ id: "closed", closedDays: [1] });
-  const result = buildCourse([recommend("s1", "맛집")], [closedMonday], 15, {}, "2026-11-02");
+  const result = buildCourse(
+    [recommend("s1", "맛집")],
+    [closedMonday],
+    15,
+    {},
+    "2026-11-02",
+  );
   assert.equal(result.success, false);
   const s1 = result.stages[0];
   assert.ok(s1.kind === "recommend");
@@ -284,6 +351,9 @@ test("예시 데이터는 모두 운영 시간과 휴무 요일 정보를 갖고
     assert.match(p.openTime, /^\d{2}:\d{2}$/, `${p.name} openTime`);
     assert.match(p.closeTime, /^\d{2}:\d{2}$/, `${p.name} closeTime`);
     assert.ok(p.openTime < p.closeTime, `${p.name} 운영 시간 순서`);
-    assert.ok(p.closedDays.every((d) => d >= 0 && d <= 6), `${p.name} closedDays`);
+    assert.ok(
+      p.closedDays.every((d) => d >= 0 && d <= 6),
+      `${p.name} closedDays`,
+    );
   }
 });

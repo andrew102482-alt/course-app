@@ -9,7 +9,7 @@
 ## 기술 스택
 - Next.js (App Router) + TypeScript + Tailwind CSS
 - 지도: 네이버 지도 API
-- 저장: 브라우저 localStorage (1차에는 서버·DB·로그인 없음)
+- 저장: 브라우저 localStorage (1차에는 DB 없음. 네이버 로그인과 AI 추천용 서버 통로만 있음)
 - 배포: Vercel
 - 버전 관리: Git
 
@@ -32,7 +32,7 @@
 - **네이버 클라우드 플랫폼 지도 API 키 발급** — 사용자 요청으로 가장 후순위로 미뤄둔 상태다.
   - '장소 직접 지정'은 네이버 장소 검색 대신, 이름·주소·위도·경도를 직접 입력하는 임시 폼으로 구현했다. 키가 발급되면 이 폼을 실제 네이버 장소 검색(Geocoding API)으로 교체한다.
   - 네이버 지도 링크(`https://map.naver.com/p/search/...`)는 키 없이 되는 공개 URL이라 그대로 쓴다. 지도 화면(`openapi.map.naver.com/openapi/v3/maps.js`, SDK 필요)은 키가 있어야 하므로 보류, 지금은 좌표를 직접 투영해 그리는 임시 지도(StubMap/RouteMap/AvatarMap)로 대신한다.
-- **로그인 기능** — 사용자 요청으로 지금은 실제 인증 없이 로그인 화면만 스텁으로 만들었다 (`LoginScreen`, 버튼을 누르면 바로 통과됨). 실사용 전에는 실제 로그인(네이버 아이디로 로그인, OAuth)을 붙여야 한다 — 지도 API 키(네이버 클라우드 플랫폼)와는 별도로, 네이버 개발자센터(NAVER Developers)에서 로그인용 앱 등록이 따로 필요하다.
+- **로그인 기능** — 네이버 로그인(OAuth)을 서버 통로(`src/app/api/auth/**`, `src/lib/session.ts`)로 연결했다. 로그인하면 서명된 쿠키로 30일 유지, "로그인 없이 둘러보기"는 체험용. 키는 `.env.local`의 `NAVER_CLIENT_ID`/`NAVER_CLIENT_SECRET`, 개발자센터 Callback URL은 `<주소>/api/auth/naver/callback`. 배포 시 Vercel 환경변수와 Callback URL을 추가해야 한다.
 - 참고로 로그인 다음에 뜨는 '내 아바타가 현재 위치에 서 있는' 화면은 지도 API와 무관하게 브라우저 Geolocation API(`navigator.geolocation`)로 실제 동작한다. 권한을 거부하거나 미지원이면 종로(REGION_CENTER)로 대신 표시한다.
 
 ## 1차 기준값

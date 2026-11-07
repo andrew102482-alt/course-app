@@ -103,7 +103,9 @@ export function walkingMinutesBetween(a: LatLng, b: LatLng): number {
 }
 
 export function isWithinRegionRange(point: LatLng): boolean {
-  return straightLineDistanceMeters(point, REGION_CENTER) <= REGION_RADIUS_METERS;
+  return (
+    straightLineDistanceMeters(point, REGION_CENTER) <= REGION_RADIUS_METERS
+  );
 }
 
 export function naverMapLinkFor(place: DesignatedPlace): string {
@@ -233,7 +235,9 @@ export function buildCourse(
     const closedExcludedCount = matching.length - pool.length;
 
     const candidates = pool
-      .map((place) => scoreCandidate(place, previous, nextDesignated, maxTravelMinutes))
+      .map((place) =>
+        scoreCandidate(place, previous, nextDesignated, maxTravelMinutes),
+      )
       .sort((a, b) => b.score - a.score);
 
     const overridePlaceId = overrides[stage.id];
@@ -251,7 +255,9 @@ export function buildCourse(
         c.travelMinutesFromPrevious <= maxTravelMinutes,
     );
     const blockedByDesignated =
-      selected === null && nextDesignated !== null && withinPreviousOnly.length > 0;
+      selected === null &&
+      nextDesignated !== null &&
+      withinPreviousOnly.length > 0;
 
     stageResults.push({
       kind: "recommend",

@@ -1,9 +1,18 @@
-export type PlaceCategory = "문화 생활" | "액티비티" | "맛집" | "카페" | "술집" | "쇼핑";
+export type PlaceCategory =
+  "문화 생활" | "액티비티" | "맛집" | "카페" | "술집" | "쇼핑";
 
 /** 대분류별 중분류(세부 카테고리). 「장소 카테고리 & 태그 분류 체계」 문서 기준. */
 export const SUB_CATEGORIES: Record<PlaceCategory, string[]> = {
   "문화 생활": ["공연", "전시", "영화", "축제·행사", "책·학습", "역사·명소"],
-  액티비티: ["실내 스포츠", "실외 스포츠", "엔터테인먼트", "체험·클래스", "자연·레저", "테마파크", "웰니스"],
+  액티비티: [
+    "실내 스포츠",
+    "실외 스포츠",
+    "엔터테인먼트",
+    "체험·클래스",
+    "자연·레저",
+    "테마파크",
+    "웰니스",
+  ],
   맛집: ["한식", "일식", "중식", "양식", "아시안·세계", "기타"],
   카페: ["커피", "디저트", "차·음료", "공간 특화", "테마형"],
   술집: ["바", "맥주", "전통주", "주점", "나이트라이프"],
@@ -410,7 +419,7 @@ export const places: Place[] = [
     category: "맛집",
     subCategory: "중식",
     lat: 37.5747,
-    lng: 126.9830,
+    lng: 126.983,
     rating: 3.9,
     reviewCount: 398,
     description: "불맛 가득한 간짜장이 인기인 중국집",
@@ -487,7 +496,7 @@ export const places: Place[] = [
     category: "카페",
     subCategory: "디저트",
     lat: 37.5724,
-    lng: 126.9920,
+    lng: 126.992,
     rating: 4.4,
     reviewCount: 1034,
     description: "제철 과일을 올린 수제 빙수 전문 카페",
@@ -626,7 +635,7 @@ export const places: Place[] = [
     category: "카페",
     subCategory: "공간 특화",
     lat: 37.5839,
-    lng: 126.9830,
+    lng: 126.983,
     rating: 4.6,
     reviewCount: 1023,
     description: "루프탑에서 즐기는 서울 야경 명소",
