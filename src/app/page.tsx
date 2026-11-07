@@ -664,7 +664,7 @@ function CourseBuilder() {
    * - 단계가 있고 분위기 글·시간 중 하나라도 있으면: AI가 기본 추천 후보 중에서 장소를 고른다.
    *   실패하면 기본 추천(평점·거리 점수)으로 보여준다.
    */
-  async function makeCourse() {
+  async function makeCourse(options: { originOnly?: boolean } = {}) {
     inputSnapshotRef.current = stages;
     setOverrides({});
     const aiInput = {
@@ -674,7 +674,8 @@ function CourseBuilder() {
       planDate: planDate || undefined,
     };
     // 출발지 말고는 단계가 하나도 없을 때만 AI가 단계 수까지 정한다("상관없음" 칸은 칸으로 센다).
-    const needsPlan = !stages.some((s) => !s.isOrigin);
+    // 출발지만 추천받기로 한 경우(originOnly)에는 뒤 일정을 짜지 않는다.
+    const needsPlan = !options.originOnly && !stages.some((s) => !s.isOrigin);
     const hasSlots = stages.some((s) => isFillSlot(s, stages));
     const wantsAi =
       needsPlan ||
@@ -995,7 +996,7 @@ function InputView({
   onRemoveStage: (id: string) => void;
   onReorderStages: (stages: Stage[]) => void;
   onRequestChangeDesignated: (stageId: string) => void;
-  onMakeCourse: () => void;
+  onMakeCourse: (options?: { originOnly?: boolean }) => void;
   makingCourse: boolean;
   onBackToHome: () => void;
 }) {
@@ -1013,7 +1014,16 @@ function InputView({
       ? "이 분위기로 코스 추천받기"
       : "AI에게 코스 추천받기";
 
+  // 출발지 칸만 있고 그 칸이 테마나 장소로 채워져 있으면, 출발지만 추천할지 먼저 묻는다.
+  const [askOriginOnly, setAskOriginOnly] = useState(false);
+  const onlyFilledOrigin =
+    origin !== undefined && others.length === 0 && !isUnsetStage(origin);
+
   function onPressMake() {
+    if (onlyFilledOrigin) {
+      setAskOriginOnly(true);
+      return;
+    }
     onMakeCourse();
   }
 
@@ -1220,6 +1230,47 @@ function InputView({
           }}
           onClose={() => setTravelPickerOpen(false)}
         />
+      )}
+
+      {askOriginOnly && (
+        <div className="fixed inset-0 z-20 flex items-center justify-center bg-black/50 px-6">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="출발지만 추천"
+            className="flex w-full max-w-sm flex-col gap-4 rounded-2xl bg-white p-5 dark:bg-zinc-900"
+          >
+            <h2 className="text-lg font-bold text-black dark:text-white">
+              출발지만 추천해드릴까요?
+            </h2>
+            <p className="text-sm text-zinc-600 dark:text-zinc-400">
+              &lsquo;아니오&rsquo;를 누르면 출발지 뒤의 일정도 AI가 이어서
+              추천해요.
+            </p>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setAskOriginOnly(false);
+                  onMakeCourse();
+                }}
+                className="h-12 flex-1 rounded-xl border border-zinc-300 text-base font-semibold text-black dark:border-zinc-700 dark:text-white"
+              >
+                아니오
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setAskOriginOnly(false);
+                  onMakeCourse({ originOnly: true });
+                }}
+                className="h-12 flex-1 rounded-xl bg-black text-base font-semibold text-white dark:bg-white dark:text-black"
+              >
+                예
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       <div className="sticky bottom-0 -mx-4 mt-auto flex flex-col gap-2 bg-white/95 px-4 pb-6 pt-3 backdrop-blur dark:bg-black/95">
