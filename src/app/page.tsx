@@ -1832,6 +1832,10 @@ function DesignatedPlaceSheet({
   const [query, setQuery] = useState("");
   // 지도 창: 현재 위치에서 시작(current) / 빈 지도에서 시작(free) / 닫힘(null).
   const [mapPick, setMapPick] = useState<"current" | "free" | null>(null);
+  // 지도 창에서 "완료"로 골라 둔 위치. 결과 목록에 띄워 두고, 눌러야 확정된다.
+  const [pendingPlace, setPendingPlace] = useState<DesignatedPlace | null>(
+    null,
+  );
   const results = useMemo(() => searchPlaces(query), [query]);
   const hasQuery = query.trim().length > 0;
 
@@ -1920,6 +1924,38 @@ function DesignatedPlaceSheet({
           )}
         </div>
 
+        {pendingPlace && (
+          <div className="flex flex-col gap-2">
+            <span className="text-sm font-medium text-zinc-600 dark:text-zinc-400">
+              선택한 위치
+            </span>
+            <button
+              type="button"
+              onClick={() => pick(pendingPlace)}
+              aria-label={`${pendingPlace.name} 지정하기`}
+              className="flex w-full items-center justify-between gap-2 rounded-xl border-2 border-black px-3 py-2.5 text-left dark:border-white"
+            >
+              <span className="flex min-w-0 flex-col items-start gap-0.5">
+                <span className="text-base font-medium text-black dark:text-white">
+                  {pendingPlace.name}
+                </span>
+                <span className="text-xs text-zinc-500 dark:text-zinc-400">
+                  {pendingPlace.address}
+                </span>
+                {!isWithinRegionRange(pendingPlace) && (
+                  <span className="text-xs text-amber-600 dark:text-amber-400">
+                    종로 일대 밖 · 코스에는 들어가지만 주변 추천은 종로
+                    일대에서만 돼요
+                  </span>
+                )}
+              </span>
+              <span className="shrink-0 rounded-lg bg-black px-3 py-1.5 text-sm font-semibold text-white dark:bg-white dark:text-black">
+                지정
+              </span>
+            </button>
+          </div>
+        )}
+
         {hasQuery ? (
           results.length === 0 ? (
             <p className="text-sm text-zinc-500 dark:text-zinc-400">
@@ -2004,7 +2040,8 @@ function DesignatedPlaceSheet({
               currentPlace !== null &&
               point.lat === currentPlace.lat &&
               point.lng === currentPlace.lng;
-            pick(
+            setMapPick(null);
+            setPendingPlace(
               unmoved
                 ? currentPlace
                 : {
@@ -2024,7 +2061,7 @@ function DesignatedPlaceSheet({
 
 /**
  * 지도를 눌러 위치를 고르는 창. 네이버 지도를 연결하기 전이라 종로 일대를 그린 임시 지도다.
- * 지도를 누르면 핀이 꽂히고, "이 위치로 지정"을 누르면 그 좌표가 지정 장소가 된다.
+ * 지도를 누르면 핀이 꽂히고, "완료"를 누르면 그 좌표가 지정 장소 창의 "선택한 위치"로 올라간다.
  */
 const PICK_MAP_BOUNDS = {
   minLat: REGION_CENTER.lat - 0.012,
@@ -2168,7 +2205,7 @@ function MapPickSheet({
           onClick={() => picked && onConfirm(picked)}
           className="h-12 w-full rounded-xl bg-black text-base font-semibold text-white disabled:opacity-40 dark:bg-white dark:text-black"
         >
-          이 위치로 지정
+          완료
         </button>
         <p className="text-xs text-zinc-400 dark:text-zinc-500">
           지금은 종로 일대를 그린 임시 지도예요. 네이버 지도를 연결하면 실제
