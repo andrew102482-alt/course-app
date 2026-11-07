@@ -21,7 +21,18 @@ import {
   type StageOverrides,
   type StageResult,
 } from "@/lib/course";
-import { MAP_LANDMARKS, searchPlaces } from "@/lib/placeSearch";
+import {
+  MAP_LANDMARKS,
+  searchPlaces,
+  type PlaceSearchResult,
+} from "@/lib/placeSearch";
+import NaverMapCanvas, {
+  type MapBubble,
+  type MapLine,
+  type MapMarker,
+} from "@/components/NaverMapCanvas";
+import { useNaverMaps } from "@/lib/useNaverMaps";
+import { useRoadPaths } from "@/lib/useRoadPaths";
 import { buildAiRequest, type AiPicks } from "@/lib/aiRecommend";
 import { saveCourse, toSavedCourse } from "@/lib/savedCourses";
 import { AvatarCustomizer, AvatarFigure } from "./AvatarCustomizer";
@@ -1895,7 +1906,37 @@ function DesignatedPlaceSheet({
   const [pendingPlace, setPendingPlace] = useState<DesignatedPlace | null>(
     null,
   );
-  const results = useMemo(() => searchPlaces(query), [query]);
+  // 네이버 Geocoding(주소 검색) 결과. 어떤 검색어의 결과인지 함께 들고 있다가, 지금 검색어와 같을 때만 보여준다.
+  const [geo, setGeo] = useState<{
+    q: string;
+    items: PlaceSearchResult[];
+  } | null>(null);
+  const trimmedQuery = query.trim();
+  useEffect(() => {
+    if (trimmedQuery.length < 2) return;
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => {
+      fetch(`/api/maps/geocode?q=${encodeURIComponent(trimmedQuery)}`, {
+        signal: ctrl.signal,
+      })
+        .then((r) => (r.ok ? r.json() : { results: [] }))
+        .then((d: { results?: PlaceSearchResult[] }) =>
+          setGeo({ q: trimmedQuery, items: d.results ?? [] }),
+        )
+        .catch(() => {});
+    }, 350);
+    return () => {
+      clearTimeout(timer);
+      ctrl.abort();
+    };
+  }, [trimmedQuery]);
+  const results = useMemo(
+    () => [
+      ...searchPlaces(query),
+      ...(geo && geo.q === trimmedQuery ? geo.items : []),
+    ],
+    [query, geo, trimmedQuery],
+  );
   const hasQuery = query.trim().length > 0;
 
   function pick(place: DesignatedPlace) {
@@ -1944,7 +1985,7 @@ function DesignatedPlaceSheet({
             autoFocus
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="장소 이름 (예: 안국역)"
+            placeholder="장소 이름 또는 주소 (예: 안국역)"
             aria-label="장소 이름"
             className="h-12 w-full rounded-xl border border-zinc-300 bg-white px-4 text-base text-black dark:border-zinc-700 dark:bg-zinc-900 dark:text-white"
           />
@@ -2141,6 +2182,7 @@ function MapPickSheet({
   const [picked, setPicked] = useState<{ lat: number; lng: number } | null>(
     initial,
   );
+  const maps = useNaverMaps();
   const drawable = MAP_VIEW_SIZE - MAP_MARGIN * 2;
   const b = PICK_MAP_BOUNDS;
 
@@ -2197,64 +2239,76 @@ function MapPickSheet({
             ? "빨간 핀이 현재 위치예요. 지도를 눌러 위치를 옮길 수 있어요."
             : "지도를 눌러 위치를 골라 주세요."}
         </p>
-        {pinOffMap && (
+        {maps !== "ready" && pinOffMap && (
           <p className="text-xs text-amber-600 dark:text-amber-400">
             현재 위치가 임시 지도(종로 일대) 밖이라 핀이 보이지 않아요. 그대로
             지정하거나 지도를 눌러 옮길 수 있어요.
           </p>
         )}
-        <svg
-          viewBox={`0 0 ${MAP_VIEW_SIZE} ${MAP_VIEW_SIZE}`}
-          onClick={onTap}
-          aria-label="종로 일대 임시 지도"
-          className="aspect-square w-full cursor-crosshair rounded-xl bg-zinc-100 text-zinc-400 dark:bg-zinc-800"
-        >
-          {[0, 1, 2, 3, 4].map((i) => (
-            <g key={i} stroke="currentColor" strokeOpacity={0.3}>
-              <line
-                x1={MAP_MARGIN + (drawable / 4) * i}
-                y1={MAP_MARGIN}
-                x2={MAP_MARGIN + (drawable / 4) * i}
-                y2={MAP_VIEW_SIZE - MAP_MARGIN}
-              />
-              <line
-                x1={MAP_MARGIN}
-                y1={MAP_MARGIN + (drawable / 4) * i}
-                x2={MAP_VIEW_SIZE - MAP_MARGIN}
-                y2={MAP_MARGIN + (drawable / 4) * i}
-              />
-            </g>
-          ))}
-          {MAP_LANDMARKS.map((lm) => {
-            const pt = projectToMap(lm, b);
-            if (
-              pt.x < 0 ||
-              pt.x > MAP_VIEW_SIZE ||
-              pt.y < 0 ||
-              pt.y > MAP_VIEW_SIZE
-            )
-              return null;
-            return (
-              <g key={lm.id} pointerEvents="none">
-                <circle cx={pt.x} cy={pt.y} r={4} fill="currentColor" />
-                <text
-                  x={pt.x + 7}
-                  y={pt.y + 4}
-                  fontSize={12}
-                  fill="currentColor"
-                >
-                  {lm.name}
-                </text>
+        {maps === "ready" ? (
+          <NaverMapCanvas
+            ariaLabel="네이버 지도(눌러서 위치 고르기)"
+            className="aspect-square w-full overflow-hidden rounded-xl"
+            initialCenter={initial ?? REGION_CENTER}
+            markers={
+              picked ? [{ id: "pick", ...picked, kind: "pin" as const }] : []
+            }
+            onMapClick={(p) => setPicked(p)}
+          />
+        ) : (
+          <svg
+            viewBox={`0 0 ${MAP_VIEW_SIZE} ${MAP_VIEW_SIZE}`}
+            onClick={onTap}
+            aria-label="종로 일대 임시 지도"
+            className="aspect-square w-full cursor-crosshair rounded-xl bg-zinc-100 text-zinc-400 dark:bg-zinc-800"
+          >
+            {[0, 1, 2, 3, 4].map((i) => (
+              <g key={i} stroke="currentColor" strokeOpacity={0.3}>
+                <line
+                  x1={MAP_MARGIN + (drawable / 4) * i}
+                  y1={MAP_MARGIN}
+                  x2={MAP_MARGIN + (drawable / 4) * i}
+                  y2={MAP_VIEW_SIZE - MAP_MARGIN}
+                />
+                <line
+                  x1={MAP_MARGIN}
+                  y1={MAP_MARGIN + (drawable / 4) * i}
+                  x2={MAP_VIEW_SIZE - MAP_MARGIN}
+                  y2={MAP_MARGIN + (drawable / 4) * i}
+                />
               </g>
-            );
-          })}
-          {pin && (
-            <g pointerEvents="none">
-              <circle cx={pin.x} cy={pin.y} r={9} fill="#ef4444" />
-              <circle cx={pin.x} cy={pin.y} r={3.5} fill="white" />
-            </g>
-          )}
-        </svg>
+            ))}
+            {MAP_LANDMARKS.map((lm) => {
+              const pt = projectToMap(lm, b);
+              if (
+                pt.x < 0 ||
+                pt.x > MAP_VIEW_SIZE ||
+                pt.y < 0 ||
+                pt.y > MAP_VIEW_SIZE
+              )
+                return null;
+              return (
+                <g key={lm.id} pointerEvents="none">
+                  <circle cx={pt.x} cy={pt.y} r={4} fill="currentColor" />
+                  <text
+                    x={pt.x + 7}
+                    y={pt.y + 4}
+                    fontSize={12}
+                    fill="currentColor"
+                  >
+                    {lm.name}
+                  </text>
+                </g>
+              );
+            })}
+            {pin && (
+              <g pointerEvents="none">
+                <circle cx={pin.x} cy={pin.y} r={9} fill="#ef4444" />
+                <circle cx={pin.x} cy={pin.y} r={3.5} fill="white" />
+              </g>
+            )}
+          </svg>
+        )}
         <button
           type="button"
           disabled={!picked}
@@ -2263,10 +2317,12 @@ function MapPickSheet({
         >
           완료
         </button>
-        <p className="text-xs text-zinc-400 dark:text-zinc-500">
-          지금은 종로 일대를 그린 임시 지도예요. 네이버 지도를 연결하면 실제
-          지도로 바뀌어요.
-        </p>
+        {maps !== "ready" && (
+          <p className="text-xs text-zinc-400 dark:text-zinc-500">
+            지금은 종로 일대를 그린 임시 지도예요. 네이버 지도를 불러오면 실제
+            지도로 바뀌어요.
+          </p>
+        )}
       </div>
     </div>
   );
@@ -3068,6 +3124,8 @@ function WalkBubble({
   );
 }
 
+type LatLngLike = { lat: number; lng: number };
+
 function StubMap({
   decidedStages,
   candidates,
@@ -3082,6 +3140,7 @@ function StubMap({
   onTapCandidate: (placeId: string) => void;
 }) {
   const [zoomPan, zoomSvgRef] = useZoomPan();
+  const maps = useNaverMaps();
 
   const decidedPoints: MapPoint[] = decidedStages
     .filter((s) => s.selected !== null)
@@ -3114,6 +3173,89 @@ function StubMap({
       <div className="flex h-full w-full items-center justify-center bg-zinc-100 text-sm text-zinc-400 dark:bg-zinc-900">
         표시할 위치가 없어요.
       </div>
+    );
+  }
+
+  if (maps === "ready") {
+    const previewCand =
+      candidates.find((c) => c.place.id === previewPlaceId) ?? null;
+    const last = decidedPoints[decidedPoints.length - 1] ?? null;
+    const mid = (a: LatLngLike, b: LatLngLike) => ({
+      lat: (a.lat + b.lat) / 2,
+      lng: (a.lng + b.lng) / 2,
+    });
+    const markers: MapMarker[] = [
+      ...decidedPoints.map((p, i) => ({
+        id: `d${i}`,
+        lat: p.lat,
+        lng: p.lng,
+        kind: "number" as const,
+        text: String(i + 1),
+        label: p.name,
+        gray: true,
+      })),
+      ...(nextSelected
+        ? [
+            {
+              id: "next",
+              lat: nextSelected.lat,
+              lng: nextSelected.lng,
+              kind: "ghost" as const,
+              label: nextSelected.name,
+            },
+          ]
+        : []),
+      ...candidates.map((c) => {
+        const isPreview = c.place.id === previewPlaceId;
+        return {
+          id: c.place.id,
+          lat: c.place.lat,
+          lng: c.place.lng,
+          kind: isPreview ? ("preview" as const) : ("candidate" as const),
+          label: isPreview ? c.place.name : undefined,
+          dim: !isPreview && !c.withinMaxTravel,
+          onClick: () => onTapCandidate(c.place.id),
+        };
+      }),
+    ];
+    const lines: MapLine[] = [];
+    const bubbles: MapBubble[] = [];
+    if (decidedPoints.length > 1)
+      lines.push({ id: "decided", path: decidedPoints, color: "#a1a1aa" });
+    if (last && previewCand) {
+      lines.push({
+        id: "to-preview",
+        path: [last, previewCand.place],
+        color: "#3b82f6",
+        dashed: true,
+      });
+      bubbles.push({
+        id: "b1",
+        ...mid(last, previewCand.place),
+        text: `도보 ${Math.round(walkingMinutesBetween(last, previewCand.place))}분`,
+      });
+    }
+    if (previewCand && nextSelected) {
+      lines.push({
+        id: "to-next",
+        path: [previewCand.place, nextSelected],
+        color: "#3b82f6",
+        dashed: true,
+      });
+      bubbles.push({
+        id: "b2",
+        ...mid(previewCand.place, nextSelected),
+        text: `도보 ${Math.round(walkingMinutesBetween(previewCand.place, nextSelected))}분`,
+      });
+    }
+    return (
+      <NaverMapCanvas
+        ariaLabel="네이버 지도(후보 장소)"
+        markers={markers}
+        lines={lines}
+        bubbles={bubbles}
+        fitKey={allPoints.map((p) => `${p.lat},${p.lng}`).join("|")}
+      />
     );
   }
 
@@ -3291,6 +3433,7 @@ function RouteMap({
   showApproach?: boolean;
 }) {
   const [zoomPan, zoomSvgRef] = useZoomPan();
+  const maps = useNaverMaps();
 
   const points: MapPoint[] = stages
     .filter((s) => s.selected !== null)
@@ -3299,6 +3442,17 @@ function RouteMap({
       lng: s.selected!.lng,
       name: s.selected!.name,
     }));
+
+  // 구간마다 도로 경로선을 받아온다(실패하면 직선). 내 위치 → 출발지 구간도 포함.
+  const legPairs = points.slice(1).map((p, i) => ({ from: points[i], to: p }));
+  const approachLeg =
+    showApproach && avatarPoint && points[0]
+      ? { from: avatarPoint, to: points[0] }
+      : null;
+  const roadPaths = useRoadPaths(
+    approachLeg ? [...legPairs, approachLeg] : legPairs,
+    maps === "ready",
+  );
 
   if (points.length === 0) {
     return (
@@ -3311,6 +3465,63 @@ function RouteMap({
   const avatarMapPoint: MapPoint | null = avatarPoint
     ? { ...avatarPoint, name: "나" }
     : null;
+  if (maps === "ready") {
+    const lines: MapLine[] = [];
+    const bubbles: MapBubble[] = [];
+    const addLeg = (
+      id: string,
+      from: LatLngLike,
+      to: LatLngLike,
+      road: LatLngLike[] | null,
+      color: string,
+      dashed: boolean,
+    ) => {
+      const path = road ? [from, ...road, to] : [from, to];
+      const m = path[Math.floor(path.length / 2)];
+      lines.push({ id, path, color, dashed });
+      bubbles.push({
+        id: `b-${id}`,
+        lat: road ? m.lat : (from.lat + to.lat) / 2,
+        lng: road ? m.lng : (from.lng + to.lng) / 2,
+        text: `도보 ${Math.round(walkingMinutesBetween(from, to))}분`,
+      });
+    };
+    legPairs.forEach((leg, i) =>
+      addLeg(`leg${i}`, leg.from, leg.to, roadPaths[i], "#3b82f6", false),
+    );
+    if (approachLeg)
+      addLeg(
+        "approach",
+        approachLeg.from,
+        approachLeg.to,
+        roadPaths[legPairs.length],
+        "#10b981",
+        true,
+      );
+    const markers: MapMarker[] = [
+      ...points.map((p, i) => ({
+        id: `p${i}`,
+        lat: p.lat,
+        lng: p.lng,
+        kind: "number" as const,
+        text: String(i + 1),
+        label: p.name,
+      })),
+      ...(avatarPoint
+        ? [{ id: "me", ...avatarPoint, kind: "avatar" as const }]
+        : []),
+    ];
+    return (
+      <NaverMapCanvas
+        ariaLabel="네이버 지도(코스)"
+        markers={markers}
+        lines={lines}
+        bubbles={bubbles}
+        fitKey={points.map((p) => `${p.lat},${p.lng}`).join("|")}
+      />
+    );
+  }
+
   const bounds = computeMapBounds(
     avatarMapPoint ? [...points, avatarMapPoint] : points,
   );
