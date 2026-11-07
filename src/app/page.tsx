@@ -33,6 +33,7 @@ import NaverMapCanvas, {
 } from "@/components/NaverMapCanvas";
 import { useNaverMaps } from "@/lib/useNaverMaps";
 import { useRoadPaths } from "@/lib/useRoadPaths";
+import { separateOverlaps } from "@/lib/lineOffset";
 import { computeProgress, formatMeters, turnIcon } from "@/lib/guidance";
 import { buildAiRequest, type AiPicks } from "@/lib/aiRecommend";
 import { saveCourse, toSavedCourse } from "@/lib/savedCourses";
@@ -3201,10 +3202,12 @@ function WalkBubble({
   from,
   to,
   minutes,
+  tone = "blue",
 }: {
   from: { x: number; y: number };
   to: { x: number; y: number };
   minutes: number;
+  tone?: "blue" | "green";
 }) {
   const label = `도보 ${Math.round(minutes)}분`;
   const width = label.length * 7 + 12;
@@ -3218,14 +3221,18 @@ function WalkBubble({
         width={width}
         height={20}
         rx={10}
-        className="fill-white stroke-blue-500 dark:fill-zinc-800 dark:stroke-blue-400"
+        className={
+          tone === "green"
+            ? "fill-white stroke-emerald-500 dark:fill-zinc-800 dark:stroke-emerald-400"
+            : "fill-white stroke-blue-500 dark:fill-zinc-800 dark:stroke-blue-400"
+        }
         strokeWidth={1.5}
       />
       <text
         x={cx}
         y={cy + 4}
         textAnchor="middle"
-        className="fill-blue-600 text-[11px] font-semibold dark:fill-blue-300"
+        className={`text-[11px] font-semibold ${tone === "green" ? "fill-emerald-600 dark:fill-emerald-300" : "fill-blue-600 dark:fill-blue-300"}`}
       >
         {label}
       </text>
@@ -3575,8 +3582,8 @@ function RouteMap({
     ? { ...avatarPoint, name: "나" }
     : null;
   if (maps === "ready") {
-    const lines: MapLine[] = [];
-    const bubbles: MapBubble[] = [];
+    const rawLines: MapLine[] = [];
+    const rawBubbles: (MapBubble & { lineId: string; viaRoad: boolean })[] = [];
     const addLeg = (
       id: string,
       from: LatLngLike,
@@ -3586,14 +3593,16 @@ function RouteMap({
       dashed: boolean,
     ) => {
       const path = road ? [from, ...road.path, to] : [from, to];
-      const m = path[Math.floor(path.length / 2)];
-      lines.push({ id, path, color, dashed });
-      bubbles.push({
+      rawLines.push({ id, path, color, dashed });
+      rawBubbles.push({
         id: `b-${id}`,
-        lat: road ? m.lat : (from.lat + to.lat) / 2,
-        lng: road ? m.lng : (from.lng + to.lng) / 2,
+        lineId: id,
+        viaRoad: !!road,
+        lat: 0,
+        lng: 0,
         // TMAP이 알려준 실제 도보 시간이 있으면 그 값을, 없으면 직선거리 기준 추정값을 쓴다.
         text: `도보 ${Math.round(road?.minutes ?? walkingMinutesBetween(from, to))}분`,
+        color: dashed ? color : undefined,
       });
     };
     legPairs.forEach((leg, i) =>
@@ -3608,6 +3617,20 @@ function RouteMap({
         "#10b981",
         true,
       );
+    // 같은 길 위에 겹치는 동선은 조금씩 옆으로 벌려 그린다. 말풍선도 옮긴 선 위에 둔다.
+    const lines = separateOverlaps(rawLines);
+    const bubbles: MapBubble[] = rawBubbles.map(
+      ({ lineId, viaRoad, ...bubble }) => {
+        const path = lines.find((l) => l.id === lineId)!.path;
+        const m = viaRoad
+          ? path[Math.floor(path.length / 2)]
+          : {
+              lat: (path[0].lat + path[path.length - 1].lat) / 2,
+              lng: (path[0].lng + path[path.length - 1].lng) / 2,
+            };
+        return { ...bubble, lat: m.lat, lng: m.lng };
+      },
+    );
     const markers: MapMarker[] = [
       ...points.map((p, i) => ({
         id: `p${i}`,
@@ -3679,6 +3702,7 @@ function RouteMap({
               from={avatarProjected}
               to={projected[0]}
               minutes={walkingMinutesBetween(avatarMapPoint, points[0])}
+              tone="green"
             />
           </>
         )}

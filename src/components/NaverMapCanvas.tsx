@@ -24,7 +24,12 @@ export type MapLine = {
   weight?: number;
 };
 
-export type MapBubble = LatLng & { id: string; text: string };
+export type MapBubble = LatLng & {
+  id: string;
+  text: string;
+  /** 말풍선 테두리·글자 색(기본 파랑). */
+  color?: string;
+};
 
 const EMPTY_MARKERS: MapMarker[] = [];
 
@@ -219,7 +224,7 @@ export default function NaverMapCanvas({
           clickable: false,
           zIndex: 50,
           icon: {
-            content: `<div style="transform:translate(-50%,-50%);white-space:nowrap;padding:2px 8px;border-radius:999px;background:#fff;border:1.5px solid #3b82f6;color:#2563eb;font-size:11px;font-weight:600;">${esc(b.text)}</div>`,
+            content: `<div style="transform:translate(-50%,-50%);white-space:nowrap;padding:2px 8px;border-radius:999px;background:#fff;border:1.5px solid ${b.color ?? "#3b82f6"};color:${b.color ?? "#2563eb"};font-size:11px;font-weight:600;">${esc(b.text)}</div>`,
             anchor: new naver.maps.Point(0, 0),
           },
         }),
