@@ -124,6 +124,9 @@ export default function NaverMapCanvas({
   ariaLabel?: string;
   className?: string;
 }) {
+  // outerRef: 부모가 정해 주는 크기를 재는 바깥 틀 / boxRef: 네이버 지도가 들어가는 안쪽 판.
+  // setSize가 안쪽 판에 px 크기를 박아 넣기 때문에, 바깥 틀을 따로 두어야 부모 크기 변화(화면 비율 조절)를 따라갈 수 있다.
+  const outerRef = useRef<HTMLDivElement>(null);
   const boxRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<any>(null);
   const overlaysRef = useRef<any[]>([]);
@@ -166,11 +169,14 @@ export default function NaverMapCanvas({
     });
     // 첫 "idle"이 안 올 때가 있어서, 만들자마자 시작 위치도 한 번 알려준다.
     centerRef.current?.({ lat: first.lat, lng: first.lng });
-    const ro = new ResizeObserver(() => {
-      const el = boxRef.current;
-      if (el) map.setSize(new naver.maps.Size(el.clientWidth, el.clientHeight));
-    });
-    ro.observe(boxRef.current);
+    const fit = () => {
+      const el = outerRef.current;
+      if (el && el.clientWidth > 0 && el.clientHeight > 0)
+        map.setSize(new naver.maps.Size(el.clientWidth, el.clientHeight));
+    };
+    fit();
+    const ro = new ResizeObserver(fit);
+    if (outerRef.current) ro.observe(outerRef.current);
     return () => {
       ro.disconnect();
       naver.maps.Event.removeListener(listener);
@@ -262,11 +268,13 @@ export default function NaverMapCanvas({
   }, [fitKey]);
 
   return (
-    <div
-      ref={boxRef}
-      role="application"
-      aria-label={ariaLabel ?? "네이버 지도"}
-      className={className}
-    />
+    <div ref={outerRef} className={`relative overflow-hidden ${className}`}>
+      <div
+        ref={boxRef}
+        role="application"
+        aria-label={ariaLabel ?? "네이버 지도"}
+        className="absolute left-0 top-0"
+      />
+    </div>
   );
 }
