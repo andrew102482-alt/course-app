@@ -1244,9 +1244,19 @@ function InputView({
             aria-label="출발지만 추천"
             className="flex w-full max-w-sm flex-col gap-4 rounded-2xl bg-white p-5 dark:bg-zinc-900"
           >
-            <h2 className="text-lg font-bold text-black dark:text-white">
-              출발지만 추천해드릴까요?
-            </h2>
+            <div className="flex items-start justify-between gap-2">
+              <h2 className="text-lg font-bold text-black dark:text-white">
+                출발지만 추천해드릴까요?
+              </h2>
+              <button
+                type="button"
+                onClick={() => setAskOriginOnly(false)}
+                aria-label="닫기"
+                className="-mr-1 -mt-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-zinc-300 dark:border-zinc-700 dark:text-white"
+              >
+                ✕
+              </button>
+            </div>
             <p className="text-sm text-zinc-600 dark:text-zinc-400">
               &lsquo;아니오&rsquo;를 누르면 출발지 뒤의 일정도 AI가 이어서
               추천해요.
