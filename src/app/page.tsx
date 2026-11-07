@@ -2036,12 +2036,14 @@ function DesignatedPlaceSheet({
               className="flex w-full items-center rounded-xl border-2 border-black px-3 py-2.5 text-left dark:border-white"
             >
               <span className="flex min-w-0 flex-col items-start gap-0.5">
-                <span className="text-base font-medium text-black dark:text-white">
+                <span className="text-lg font-bold text-black dark:text-white">
                   {pendingPlace.name}
                 </span>
-                <span className="text-xs text-zinc-500 dark:text-zinc-400">
-                  {pendingPlace.address}
-                </span>
+                {pendingPlace.address !== pendingPlace.name && (
+                  <span className="text-xs text-zinc-500 dark:text-zinc-400">
+                    {pendingPlace.address}
+                  </span>
+                )}
                 {!isWithinRegionRange(pendingPlace) && (
                   <span className="text-xs text-amber-600 dark:text-amber-400">
                     종로 일대 밖 · 코스에는 들어가지만 주변 추천은 종로
@@ -2131,7 +2133,7 @@ function DesignatedPlaceSheet({
           title={mapPick === "current" ? "현재 위치 확인" : "지도에서 지정"}
           initial={mapPick === "current" ? currentLocation : null}
           onClose={() => setMapPick(null)}
-          onConfirm={(point, address) => {
+          onConfirm={(point, info) => {
             // 현재 위치 그대로면 "현재 위치", 지도에서 옮기거나 새로 골랐으면 "지도에서 고른 위치".
             const unmoved =
               currentPlace !== null &&
@@ -2143,8 +2145,9 @@ function DesignatedPlaceSheet({
                 ? currentPlace
                 : {
                     id: MAP_PICK_PLACE_ID,
-                    name: "지도에서 고른 위치",
-                    address: address ?? "지도에서 직접 고른 위치",
+                    // 이름 있는 장소면 그 이름, 아니면 주소를 이름 자리에 크게 보여준다.
+                    name: info.name ?? info.address ?? "지도에서 고른 위치",
+                    address: info.address ?? "지도에서 직접 고른 위치",
                     lat: point.lat,
                     lng: point.lng,
                   },
@@ -2179,7 +2182,7 @@ function MapPickSheet({
   onClose: () => void;
   onConfirm: (
     point: { lat: number; lng: number },
-    address: string | null,
+    info: { address: string | null; name: string | null },
   ) => void;
 }) {
   const [picked, setPicked] = useState<{ lat: number; lng: number } | null>(
@@ -2189,9 +2192,11 @@ function MapPickSheet({
   // 지도를 끄는 중이면 핀을 살짝 들어 올린다(택시 앱처럼).
   const [moving, setMoving] = useState(false);
   // 핀이 가리키는 곳의 주소(어느 좌표의 주소인지 함께 들고 있다가 지금 위치와 같을 때만 보여준다).
-  const [addr, setAddr] = useState<{ key: string; text: string | null } | null>(
-    null,
-  );
+  const [addr, setAddr] = useState<{
+    key: string;
+    address: string | null;
+    name: string | null;
+  } | null>(null);
   const pickedKey = picked ? `${picked.lat},${picked.lng}` : null;
   useEffect(() => {
     if (maps !== "ready" || !picked || !pickedKey) return;
@@ -2200,13 +2205,16 @@ function MapPickSheet({
       signal: ctrl.signal,
     })
       .then((r) => (r.ok ? r.json() : { address: null }))
-      .then((d: { address: string | null }) =>
-        setAddr({ key: pickedKey, text: d.address }),
+      .then((d: { address: string | null; name?: string | null }) =>
+        setAddr({ key: pickedKey, address: d.address, name: d.name ?? null }),
       )
       .catch(() => {});
     return () => ctrl.abort();
   }, [maps, picked, pickedKey]);
-  const addrText = addr && addr.key === pickedKey ? addr.text : null;
+  const addrInfo =
+    addr && addr.key === pickedKey
+      ? { address: addr.address, name: addr.name }
+      : { address: null, name: null };
   const drawable = MAP_VIEW_SIZE - MAP_MARGIN * 2;
   const b = PICK_MAP_BOUNDS;
 
@@ -2375,15 +2383,26 @@ function MapPickSheet({
         )}
         {maps === "ready" && (
           <p className="min-h-5 text-sm font-medium text-black dark:text-white">
-            {moving || !picked
-              ? "위치를 맞추는 중…"
-              : (addrText ?? "주소를 찾을 수 없는 곳이에요")}
+            {moving || !picked ? (
+              <span className="text-base font-semibold">위치를 맞추는 중…</span>
+            ) : addrInfo.name ? (
+              <>
+                <span className="block text-lg font-bold">{addrInfo.name}</span>
+                <span className="block text-xs font-normal text-zinc-500 dark:text-zinc-400">
+                  {addrInfo.address}
+                </span>
+              </>
+            ) : (
+              <span className="text-lg font-bold">
+                {addrInfo.address ?? "주소를 찾을 수 없는 곳이에요"}
+              </span>
+            )}
           </p>
         )}
         <button
           type="button"
           disabled={!picked || moving}
-          onClick={() => picked && onConfirm(picked, addrText)}
+          onClick={() => picked && onConfirm(picked, addrInfo)}
           className="h-12 w-full rounded-xl bg-black text-base font-semibold text-white disabled:opacity-40 dark:bg-white dark:text-black"
         >
           완료

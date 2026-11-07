@@ -8,7 +8,7 @@ export async function GET(request: Request) {
   const id = process.env.NCP_MAPS_CLIENT_ID;
   const secret = process.env.NCP_MAPS_CLIENT_SECRET;
   if (!Number.isFinite(lat) || !Number.isFinite(lng) || !id || !secret) {
-    return NextResponse.json({ address: null });
+    return NextResponse.json({ address: null, name: null });
   }
 
   try {
@@ -22,7 +22,7 @@ export async function GET(request: Request) {
         cache: "no-store",
       },
     );
-    if (!res.ok) return NextResponse.json({ address: null });
+    if (!res.ok) return NextResponse.json({ address: null, name: null });
     type Area = { name?: string };
     const data = (await res.json()) as {
       results?: {
@@ -32,7 +32,7 @@ export async function GET(request: Request) {
           name?: string;
           number1?: string;
           number2?: string;
-          addition0?: { value?: string };
+          addition0?: { type?: string; value?: string };
         };
       }[];
     };
@@ -40,7 +40,7 @@ export async function GET(request: Request) {
     const road = list.find((r) => r.name === "roadaddr");
     const jibun = list.find((r) => r.name === "addr");
     const pick = road ?? jibun;
-    if (!pick) return NextResponse.json({ address: null });
+    if (!pick) return NextResponse.json({ address: null, name: null });
 
     const area = (k: string) => pick.region[k]?.name ?? "";
     const num = pick.land?.number1
@@ -51,12 +51,16 @@ export async function GET(request: Request) {
     const parts = road
       ? [area("area1"), area("area2"), pick.land?.name ?? "", num]
       : [area("area1"), area("area2"), area("area3"), num];
-    const building = pick.land?.addition0?.value;
-    const address = [...parts, building ?? ""]
-      .filter((p) => p.length > 0)
-      .join(" ");
-    return NextResponse.json({ address: address || null });
+    const address = parts.filter((p) => p.length > 0).join(" ");
+    // 이름이 붙은 건물·장소(예: 경복궁, 3호선 안국역)면 그 이름도 함께 돌려준다.
+    const named = list
+      .map((r) => r.land?.addition0)
+      .find((a) => a?.type === "building" && a.value);
+    return NextResponse.json({
+      address: address || null,
+      name: named?.value ?? null,
+    });
   } catch {
-    return NextResponse.json({ address: null });
+    return NextResponse.json({ address: null, name: null });
   }
 }

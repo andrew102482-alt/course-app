@@ -164,6 +164,8 @@ export default function NaverMapCanvas({
       const c = map.getCenter();
       centerRef.current?.({ lat: c.lat(), lng: c.lng() });
     });
+    // 첫 "idle"이 안 올 때가 있어서, 만들자마자 시작 위치도 한 번 알려준다.
+    centerRef.current?.({ lat: first.lat, lng: first.lng });
     const ro = new ResizeObserver(() => {
       const el = boxRef.current;
       if (el) map.setSize(new naver.maps.Size(el.clientWidth, el.clientHeight));
