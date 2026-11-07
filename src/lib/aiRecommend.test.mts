@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  buildFillPrompt,
   buildPrompt,
+  parseFill,
   parsePicks,
   parsePlan,
   type AiRecommendRequest,
@@ -103,4 +105,39 @@ test("parsePlan: 최대 5단계까지만, 망가진 응답은 빈 결과", () =>
   });
   assert.equal(parsePlan(many).length, 5);
   assert.deepEqual(parsePlan("JSON 아님"), []);
+});
+
+test("buildFillPrompt: 정해진 단계는 이름으로, 빈 칸은 ?로 보내고 칸 수를 알려 준다", () => {
+  const { system, user } = buildFillPrompt({
+    mode: "fill",
+    themeNote: "조용한 하루",
+    startHour: 14,
+    endHour: null,
+    stages: [
+      { label: "카페 / 커피" },
+      { label: null },
+      { label: "경복궁" },
+      { label: null },
+    ],
+  });
+  assert.match(user, /1\. 카페 \/ 커피/);
+  assert.match(user, /2\. \?/);
+  assert.match(user, /4\. \?/);
+  assert.match(system, /2개/);
+});
+
+test("parseFill: 칸 수만큼 오면 그대로, 모자라면 실패(빈 결과)", () => {
+  const two = JSON.stringify({
+    stages: [
+      { category: "맛집", subCategory: "한식" },
+      { category: "카페", subCategory: "" },
+      { category: "쇼핑", subCategory: "" },
+    ],
+  });
+  assert.deepEqual(parseFill(two, 2), [
+    { category: "맛집", subCategory: "한식" },
+    { category: "카페", subCategory: undefined },
+  ]);
+  assert.deepEqual(parseFill(two, 4), []);
+  assert.deepEqual(parseFill("JSON 아님", 1), []);
 });

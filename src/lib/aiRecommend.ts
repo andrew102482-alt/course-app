@@ -226,7 +226,10 @@ export function buildPlanPrompt(req: AiPlanRequest): {
 }
 
 /** 모델 응답에서 단계 목록을 꺼낸다. 없는 카테고리·세부 카테고리는 버리거나 세부만 뺀다. */
-export function parsePlan(text: string): AiPlannedStage[] {
+export function parsePlan(
+  text: string,
+  max: number = AI_MAX_PLANNED_STAGES,
+): AiPlannedStage[] {
   let raw: unknown;
   try {
     raw = JSON.parse(text);
@@ -253,7 +256,62 @@ export function parsePlan(text: string): AiPlannedStage[] {
     const subCategory =
       typeof sub === "string" && available[cat].includes(sub) ? sub : undefined;
     result.push({ category: cat, subCategory });
-    if (result.length >= AI_MAX_PLANNED_STAGES) break;
+    if (result.length >= max) break;
   }
   return result;
+}
+
+/** 일정 중 "상관없음" 칸만 AI가 채워 달라고 요청하는 본문. label이 null인 칸이 AI가 정할 칸이다. */
+export type AiFillRequest = {
+  mode: "fill";
+  themeNote: string;
+  startHour: number | null;
+  endHour: number | null;
+  planDate?: string;
+  stages: { label: string | null }[];
+};
+
+export function countFillSlots(stages: { label: string | null }[]): number {
+  return stages.filter((s) => s.label === null).length;
+}
+
+export function buildFillPrompt(req: AiFillRequest): {
+  system: string;
+  user: string;
+} {
+  const available = availableCatalog();
+  const catalog = Object.entries(available)
+    .map(([c, subs]) =>
+      subs.length > 0
+        ? `- ${c}: ${subs.join(", ")}`
+        : `- ${c}: (세부 카테고리 없음)`,
+    )
+    .join("\n");
+  const slots = countFillSlots(req.stages);
+  const system = [
+    "너는 하루 데이트·나들이 코스의 일정 단계를 채워 주는 도우미다.",
+    "일정 중 이미 정해진 단계는 그대로 두고, '?'로 표시된 칸에만 들어갈 카테고리를 정한다.",
+    "각 칸은 아래 카테고리 중 하나이고, 세부 카테고리는 그 카테고리에 속한 것만 고를 수 있다(꼭 필요 없으면 빈 문자열).",
+    catalog,
+    "사용자가 적은 분위기·테마, 만나는/헤어지는 시간, 앞뒤 단계와 어울리게 정한다. 이미 있는 단계와 같은 종류가 연달아 나오지 않게 하고, 식사 시간대에는 맛집을 넣는 식으로 하루 흐름이 자연스럽게 한다.",
+    `'?' 칸은 모두 ${slots}개이고, 칸 순서대로 정확히 ${slots}개를 답한다. 응답은 JSON만 출력한다.`,
+  ].join("\n");
+  const lines = [
+    `일정 날짜: ${req.planDate ?? "정하지 않음"}`,
+    `만나는 시간: ${formatHour(req.startHour)}`,
+    `헤어지는 시간: ${formatHour(req.endHour)}`,
+    `원하는 분위기·테마: ${req.themeNote.trim() ? req.themeNote.trim() : "(적지 않음)"}`,
+    "",
+    "일정 단계(순서대로):",
+    ...req.stages.map((s, i) => `${i + 1}. ${s.label ?? "?"}`),
+    "",
+    '{"stages":[{"category":"...","subCategory":"..."}]} 형식으로, ? 칸 순서대로 답해라.',
+  ];
+  return { system, user: lines.join("\n") };
+}
+
+/** fill 응답에서 칸 수만큼의 단계를 꺼낸다. 칸 수에 모자라면 빈 결과(실패)로 본다. */
+export function parseFill(text: string, slots: number): AiPlannedStage[] {
+  const parsed = parsePlan(text, slots);
+  return parsed.length === slots ? parsed : [];
 }

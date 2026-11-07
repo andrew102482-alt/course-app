@@ -110,6 +110,25 @@ function isUnsetStage(stage: Stage): boolean {
   );
 }
 
+/**
+ * AI가 테마와 장소를 채워 줄 "상관없음" 칸.
+ * 출발지의 "상관없음"은 다른 단계가 하나라도 있을 때만 칸으로 센다(없으면 AI가 일정을 통으로 짠다).
+ */
+function isFillSlot(stage: Stage, all: Stage[]): boolean {
+  if (!isUnsetStage(stage)) return false;
+  return !stage.isOrigin || all.some((s) => !s.isOrigin);
+}
+
+/** AI에게 알려 줄 단계 이름. 추천 단계는 카테고리(+세부), 지정 단계는 장소 이름. */
+function describeStageForAi(stage: Stage): string {
+  if (stage.kind === "recommend") {
+    return stage.subCategory
+      ? `${stage.category} / ${stage.subCategory}`
+      : stage.category;
+  }
+  return stage.isOrigin ? `출발지: ${stage.place.name}` : stage.place.name;
+}
+
 /** 장소를 아직 고르지 않은 "상관없음" 지정 단계(출발지 기본값, 단계 추가의 "상관없음")를 만든다. */
 function unsetPlace(): DesignatedPlace {
   return {
@@ -189,7 +208,14 @@ function loadRecentDesignated(): DesignatedPlace[] {
     const raw = window.localStorage.getItem(RECENT_DESIGNATED_STORAGE_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
+    if (!Array.isArray(parsed)) return [];
+    // 예전 버전이 같은 id로 저장한 항목이 있어도 목록 키가 겹치지 않게 id 기준으로 한 번 거른다.
+    const seen = new Set<string>();
+    return (parsed as DesignatedPlace[]).filter((p) => {
+      if (seen.has(p.id)) return false;
+      seen.add(p.id);
+      return true;
+    });
   } catch {
     return [];
   }
@@ -281,6 +307,10 @@ function CourseBuilder() {
   const [overrides, setOverrides] = useState<StageOverrides>({});
   // AI에게 코스를 물어보는 중인지, 그리고 실패했을 때 잠깐 띄울 안내 문구.
   const [makingCourse, setMakingCourse] = useState(false);
+  // 결과 화면에서 "상관없음" 칸을 AI가 채우는 동안 true.
+  const [fillingSlots, setFillingSlots] = useState(false);
+  // AI가 채워 준 출발지 단계의 id. 결과에서 돌아갈 때 이 출발지만 "상관없음"으로 되돌린다.
+  const [aiFilledOriginId, setAiFilledOriginId] = useState<string | null>(null);
   const [aiMessage, setAiMessage] = useState<string | null>(null);
   const [addSheetOpen, setAddSheetOpen] = useState(false);
   // 일정 칸의 "변경"을 누르면 단계 추가와 같은 창이 뜨고, 고른 것으로 그 칸이 바뀐다. 바꿀 칸의 id.
@@ -437,19 +467,28 @@ function CourseBuilder() {
   }
 
   function addUnsetDesignatedStage() {
-    setStages((prev) => [
-      ...prev,
+    const next: Stage[] = [
+      ...stages,
       { id: generateId("stage"), kind: "designated", place: unsetPlace() },
-    ]);
+    ];
+    setStages(next);
     setAddSheetOpen(false);
+    // 결과 화면에서 추가한 "상관없음" 칸은 바로 AI가 채운다.
+    if (showResult) void fillSlotsOnResult(next);
   }
 
   function upsertDesignatedStage(place: DesignatedPlace) {
     setStages((prev) => {
       if (designatedEditTarget && designatedEditTarget !== "new") {
+        // 추천 단계였던 칸도 장소를 직접 고르면 지정 단계로 바뀐다(출발지 표시는 유지).
         return prev.map((s) =>
-          s.id === designatedEditTarget && s.kind === "designated"
-            ? { ...s, place }
+          s.id === designatedEditTarget
+            ? {
+                id: s.id,
+                kind: "designated" as const,
+                place,
+                isOrigin: s.isOrigin,
+              }
             : s,
         );
       }
@@ -460,12 +499,15 @@ function CourseBuilder() {
     });
     setRecentDesignated((prev) => {
       const deduped = prev.filter(
-        (p) => !(p.name === place.name && p.address === place.address),
+        (p) =>
+          p.id !== place.id &&
+          !(p.name === place.name && p.address === place.address),
       );
       const next = [place, ...deduped].slice(0, MAX_RECENT_DESIGNATED);
       saveRecentDesignated(next);
       return next;
     });
+    if (designatedEditTarget === aiFilledOriginId) setAiFilledOriginId(null);
     setOverrides({}); // 지정 장소가 바뀌면 주변 추천 단계를 다시 계산한다.
     setDesignatedEditTarget(null);
     setAddSheetOpen(false);
@@ -473,6 +515,35 @@ function CourseBuilder() {
 
   function removeStage(id: string) {
     setStages((prev) => prev.filter((s) => s.id !== id || s.isOrigin));
+  }
+
+  /** 결과 화면에서 입력 화면으로 돌아간다. AI가 채웠던 출발지는 "상관없음"으로 되돌린다(직접 고른 출발지는 유지). */
+  function leaveResult() {
+    setShowResult(false);
+    const originId = aiFilledOriginId;
+    if (!originId) return;
+    setAiFilledOriginId(null);
+    setStages((prev) =>
+      prev.map((s) =>
+        s.isOrigin && s.id === originId && s.kind === "recommend"
+          ? {
+              id: s.id,
+              kind: "designated" as const,
+              isOrigin: true,
+              place: unsetPlace(),
+            }
+          : s,
+      ),
+    );
+  }
+
+  /** 결과 화면에서 단계를 지운다. 남은 단계가 없으면 입력 화면으로 돌아간다. */
+  function removeStageFromResult(id: string) {
+    const remaining = stages.filter(
+      (s) => s.id !== id && !s.isOrigin && !isUnsetStage(s),
+    );
+    removeStage(id);
+    if (remaining.length === 0) leaveResult();
   }
 
   async function postRecommend<T>(body: unknown): Promise<T> {
@@ -491,6 +562,111 @@ function CourseBuilder() {
   }
 
   /**
+   * "상관없음" 칸을 AI가 정한 테마(카테고리)로 채운 새 단계 목록을 돌려준다(칸의 id는 그대로).
+   * 칸이 없으면 그대로, AI가 실패하거나 칸 수가 맞지 않으면 null.
+   */
+  async function fillSlots(
+    list: Stage[],
+    aiInput: {
+      themeNote: string;
+      startHour: number | null;
+      endHour: number | null;
+      planDate?: string;
+    },
+  ): Promise<Stage[] | null> {
+    const isSlot = (s: Stage) => isFillSlot(s, list);
+    if (!list.some(isSlot)) return list;
+    const slotCount = list.filter(isSlot).length;
+    try {
+      const data = await postRecommend<{
+        stages?: { category: PlaceCategory; subCategory?: string }[];
+      }>({
+        mode: "fill",
+        ...aiInput,
+        stages: list
+          .filter((s) => !(isUnsetStage(s) && !isSlot(s)))
+          .map((s) => ({
+            label: isSlot(s) ? null : describeStageForAi(s),
+          })),
+      });
+      const filled = data.stages ?? [];
+      if (filled.length !== slotCount) return null;
+      const originSlot = list.find((s) => s.isOrigin && isSlot(s));
+      if (originSlot) setAiFilledOriginId(originSlot.id);
+      let i = 0;
+      return list.map((s) => {
+        if (!isSlot(s)) return s;
+        const f = filled[i++];
+        return {
+          id: s.id,
+          kind: "recommend" as const,
+          category: f.category,
+          subCategory: f.subCategory,
+          isOrigin: s.isOrigin,
+        };
+      });
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * 결과 화면에서 "상관없음" 칸이 생겼을 때: AI가 테마를 정해 채우고, 그 칸의 장소도 고른다.
+   * 실패하면 빈 칸은 지워서(보이지 않는 칸이 남지 않게) 안내만 띄운다.
+   */
+  async function fillSlotsOnResult(next: Stage[]) {
+    setFillingSlots(true);
+    try {
+      const aiInput = {
+        themeNote,
+        startHour,
+        endHour,
+        planDate: planDate || undefined,
+      };
+      const filled = await fillSlots(next, aiInput);
+      if (!filled) {
+        setStages((prev) =>
+          prev.filter((s) => s.isOrigin || !isFillSlot(s, prev)),
+        );
+        showAiMessage(
+          "AI가 상관없음 칸을 채우지 못했어요. 다시 시도해 주세요.",
+        );
+        return;
+      }
+      const newIds = new Set(
+        next.filter((s) => isFillSlot(s, next)).map((s) => s.id),
+      );
+      setStages((prev) =>
+        prev.map(
+          (s) => filled.find((f) => f.id === s.id && newIds.has(s.id)) ?? s,
+        ),
+      );
+      try {
+        const baseline = buildCourse(
+          filled.filter((s) => !isUnsetStage(s)),
+          places,
+          maxTravelMinutes,
+          overrides,
+          planDate,
+        );
+        const data = await postRecommend<{ picks?: AiPicks }>(
+          buildAiRequest(baseline, aiInput),
+        );
+        const added = Object.fromEntries(
+          Object.entries(data.picks ?? {}).filter(([id]) => newIds.has(id)),
+        );
+        if (Object.keys(added).length > 0) {
+          setOverrides((prev) => ({ ...prev, ...added }));
+        }
+      } catch {
+        // 장소 고르기만 실패하면 기본 추천(평점·거리)으로 둔다.
+      }
+    } finally {
+      setFillingSlots(false);
+    }
+  }
+
+  /**
    * - 일정 단계가 하나도 없으면: AI가 분위기 글·시간으로 단계부터 짜고, 그 단계에 맞는 장소도 고른다.
    *   AI가 실패하면 결과로 넘어가지 않고 안내만 띄운다(보여줄 단계가 없으므로).
    * - 단계가 있고 분위기 글·시간 중 하나라도 있으면: AI가 기본 추천 후보 중에서 장소를 고른다.
@@ -504,17 +680,21 @@ function CourseBuilder() {
       endHour,
       planDate: planDate || undefined,
     };
-    const needsPlan = !stages.some((s) => !s.isOrigin && !isUnsetStage(s));
+    // 출발지 말고는 단계가 하나도 없을 때만 AI가 단계 수까지 정한다("상관없음" 칸은 칸으로 센다).
+    const needsPlan = !stages.some((s) => !s.isOrigin);
+    const hasSlots = stages.some((s) => isFillSlot(s, stages));
     const wantsAi =
       needsPlan ||
+      hasSlots ||
       themeNote.trim().length > 0 ||
       startHour !== null ||
       endHour !== null;
     let working = stages.filter((s) => !isUnsetStage(s));
     let plannedStages: Stage[] | null = null;
+    let filledStages: Stage[] | null = null;
     if (
       !wantsAi ||
-      (!needsPlan && !working.some((s) => s.kind === "recommend"))
+      (!needsPlan && !hasSlots && !working.some((s) => s.kind === "recommend"))
     ) {
       setShowResult(true);
       return;
@@ -553,6 +733,19 @@ function CourseBuilder() {
         );
       }
 
+      if (!needsPlan && hasSlots) {
+        const filled = await fillSlots(stages, aiInput);
+        if (filled) {
+          filledStages = filled;
+          working = filled.filter((s) => !isUnsetStage(s));
+        } else {
+          showAiMessage(
+            "AI가 상관없음 칸을 채우지 못해 그 칸은 빼고 보여드려요.",
+          );
+          if (!working.some((s) => !s.isOrigin)) return;
+        }
+      }
+
       try {
         const baseline = buildCourse(
           working,
@@ -573,6 +766,10 @@ function CourseBuilder() {
       if (plannedStages) {
         const added = plannedStages;
         setStages((prev) => [...prev.filter((s) => s.isOrigin), ...added]);
+      }
+      if (filledStages) {
+        const byId = new Map(filledStages.map((s) => [s.id, s]));
+        setStages((prev) => prev.map((s) => byId.get(s.id) ?? s));
       }
       setShowResult(true);
     } finally {
@@ -617,7 +814,7 @@ function CourseBuilder() {
         onBack={() => setNavigating(false)}
         onEnd={() => {
           setNavigating(false);
-          setShowResult(false);
+          leaveResult();
         }}
       />
     );
@@ -629,12 +826,15 @@ function CourseBuilder() {
         <ResultView
           result={result}
           avatarPoint={avatarPoint}
-          onBack={() => setShowResult(false)}
+          onBack={leaveResult}
           onReplace={replaceRecommendStage}
           onRequestChangeDesignated={(stageId) =>
             setDesignatedEditTarget(stageId)
           }
           onReorderStages={reorderStagesById}
+          onRequestChangeTheme={setChangeStageTarget}
+          onRemoveStage={removeStageFromResult}
+          onAddStage={() => setAddSheetOpen(true)}
           onDecideRoute={() => setNavigating(true)}
         />
       ) : onHome ? (
@@ -678,6 +878,15 @@ function CourseBuilder() {
         </div>
       )}
 
+      {fillingSlots && (
+        <div
+          role="status"
+          className="fixed inset-x-4 top-4 z-50 mx-auto max-w-md rounded-xl bg-zinc-900 px-4 py-3 text-center text-sm text-white shadow-lg dark:bg-white dark:text-black"
+        >
+          AI가 상관없음 칸을 채우는 중…
+        </div>
+      )}
+
       {aiMessage && (
         <div
           role="status"
@@ -703,6 +912,9 @@ function CourseBuilder() {
           canAddMore
           onClose={() => setChangeStageTarget(null)}
           onAddRecommend={(category, subCategory) => {
+            if (changeStageTarget === aiFilledOriginId) {
+              setAiFilledOriginId(null);
+            }
             setStages((prev) =>
               prev.map((s) =>
                 s.id === changeStageTarget
@@ -716,26 +928,25 @@ function CourseBuilder() {
                   : s,
               ),
             );
-            setOverrides({});
             setChangeStageTarget(null);
           }}
           onAddUnsetDesignated={() => {
-            setStages((prev) =>
-              prev.map((s) =>
-                s.id !== changeStageTarget
-                  ? s
-                  : s.kind === "designated"
-                    ? { ...s, place: unsetPlace() }
-                    : {
-                        id: generateId("stage"),
-                        kind: "designated" as const,
-                        place: unsetPlace(),
-                        isOrigin: s.isOrigin,
-                      },
-              ),
+            const next: Stage[] = stages.map((s) =>
+              s.id !== changeStageTarget
+                ? s
+                : s.kind === "designated"
+                  ? { ...s, place: unsetPlace() }
+                  : {
+                      id: s.id,
+                      kind: "designated" as const,
+                      place: unsetPlace(),
+                      isOrigin: s.isOrigin,
+                    },
             );
+            setStages(next);
             setOverrides({});
             setChangeStageTarget(null);
+            if (showResult) void fillSlotsOnResult(next);
           }}
           onStartDesignated={() => {
             setDesignatedEditTarget(changeStageTarget);
@@ -1529,7 +1740,7 @@ function DesignatedPlaceSheet({
 
   function pick(place: DesignatedPlace) {
     onSubmit({
-      id: initial?.id ?? place.id,
+      id: place.id,
       name: place.name,
       address: place.address,
       lat: place.lat,
@@ -1749,6 +1960,9 @@ function ResultView({
   onReplace,
   onRequestChangeDesignated,
   onReorderStages,
+  onRequestChangeTheme,
+  onRemoveStage,
+  onAddStage,
   onDecideRoute,
 }: {
   result: CourseResult;
@@ -1758,6 +1972,9 @@ function ResultView({
   onRequestChangeDesignated: (stageId: string) => void;
   /** 출발지를 뺀 단계 id를 새 순서대로 넘긴다. */
   onReorderStages: (orderedIds: string[]) => void;
+  onRequestChangeTheme: (stageId: string) => void;
+  onRemoveStage: (stageId: string) => void;
+  onAddStage: () => void;
   onDecideRoute: () => void;
 }) {
   const [openStageId, setOpenStageId] = useState<string | null>(null);
@@ -1831,22 +2048,36 @@ function ResultView({
         )}
 
         {stageResult.kind === "recommend" && stageResult.selected && (
-          <div className="flex flex-col gap-0.5 rounded-xl border border-zinc-300 p-4 dark:border-zinc-700">
-            <div className="flex items-start justify-between gap-2">
-              <div className="flex flex-1 items-center gap-1">
+          <div className="flex items-center justify-between gap-2 rounded-xl border border-zinc-300 p-4 dark:border-zinc-700">
+            <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+              <div className="flex items-center gap-1">
                 {handle}
                 <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                   <span className="text-lg font-semibold text-black dark:text-white">
                     {stageResult.selected.name}
                   </span>
-                  <span className="w-fit rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+                  <button
+                    type="button"
+                    onClick={() => onRequestChangeTheme(stageResult.stage.id)}
+                    aria-label="테마 바꾸기"
+                    className="flex w-fit items-center gap-1 rounded-full border border-zinc-300 bg-zinc-100 px-2.5 py-0.5 text-xs font-medium text-zinc-700 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-200"
+                  >
                     {stageResult.selected.category}
                     {stageResult.selected.subCategory
                       ? ` · ${stageResult.selected.subCategory}`
                       : ""}
-                  </span>
+                    <span aria-hidden className="text-[10px]">
+                      ▾
+                    </span>
+                  </button>
                 </div>
               </div>
+              <span className="text-sm text-zinc-600 dark:text-zinc-400">
+                ★ {stageResult.selected.rating.toFixed(1)} · 리뷰{" "}
+                {stageResult.selected.reviewCount.toLocaleString()}개
+              </span>
+            </div>
+            <div className="flex shrink-0 items-center gap-1.5">
               <button
                 type="button"
                 onClick={() => setOpenStageId(stageResult.stage.id)}
@@ -1854,17 +2085,23 @@ function ResultView({
               >
                 교체
               </button>
+              {!stageResult.stage.isOrigin && (
+                <button
+                  type="button"
+                  onClick={() => onRemoveStage(stageResult.stage.id)}
+                  aria-label="이 단계 삭제"
+                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-zinc-300 text-zinc-500 dark:border-zinc-700 dark:text-zinc-400"
+                >
+                  ✕
+                </button>
+              )}
             </div>
-            <span className="text-sm text-zinc-600 dark:text-zinc-400">
-              ★ {stageResult.selected.rating.toFixed(1)} · 리뷰{" "}
-              {stageResult.selected.reviewCount.toLocaleString()}개
-            </span>
           </div>
         )}
 
         {stageResult.kind === "designated" && (
-          <div className="flex flex-col gap-2 rounded-xl border border-zinc-300 p-4 dark:border-zinc-700">
-            <div className="flex items-start justify-between gap-2">
+          <div className="flex items-center justify-between gap-2 rounded-xl border border-zinc-300 p-4 dark:border-zinc-700">
+            <div className="flex min-w-0 flex-1 flex-col gap-2">
               <div className="flex flex-1 items-center gap-1">
                 {handle}
                 <div className="flex flex-col gap-1">
@@ -1876,6 +2113,22 @@ function ResultView({
                   </span>
                 </div>
               </div>
+              <span className="text-sm text-zinc-500 dark:text-zinc-500">
+                {stageResult.selected.address}
+              </span>
+              <a
+                href={naverMapLinkFor(stageResult.selected)}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-sm font-medium text-blue-600 dark:text-blue-400"
+              >
+                네이버맵에서 보기
+              </a>
+              <span className="text-sm text-zinc-500 dark:text-zinc-500">
+                🕒 운영 시간 정보 없음
+              </span>
+            </div>
+            <div className="flex shrink-0 items-center gap-1.5">
               <button
                 type="button"
                 onClick={() => onRequestChangeDesignated(stageResult.stage.id)}
@@ -1883,21 +2136,17 @@ function ResultView({
               >
                 변경
               </button>
+              {!stageResult.stage.isOrigin && (
+                <button
+                  type="button"
+                  onClick={() => onRemoveStage(stageResult.stage.id)}
+                  aria-label="이 단계 삭제"
+                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-zinc-300 text-zinc-500 dark:border-zinc-700 dark:text-zinc-400"
+                >
+                  ✕
+                </button>
+              )}
             </div>
-            <span className="text-sm text-zinc-500 dark:text-zinc-500">
-              {stageResult.selected.address}
-            </span>
-            <a
-              href={naverMapLinkFor(stageResult.selected)}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-sm font-medium text-blue-600 dark:text-blue-400"
-            >
-              네이버맵에서 보기
-            </a>
-            <span className="text-sm text-zinc-500 dark:text-zinc-500">
-              🕒 운영 시간 정보 없음
-            </span>
           </div>
         )}
       </>
@@ -1968,9 +2217,14 @@ function ResultView({
             style={{ flexGrow: split.ratio, flexBasis: 0 }}
             className="min-h-0 overflow-y-auto px-4 pb-4"
           >
-            <p className="mb-3 text-sm font-medium text-zinc-600 dark:text-zinc-400">
-              총 이동시간 약 {Math.round(result.totalTravelMinutes)}분
-            </p>
+            <div className="mb-3 flex items-baseline justify-between gap-2">
+              <p className="text-sm font-medium text-zinc-600 dark:text-zinc-400">
+                총 이동시간 약 {Math.round(result.totalTravelMinutes)}분
+              </p>
+              <p className="text-xs text-zinc-400 dark:text-zinc-500">
+                테마(▾)를 누르면 바꿀 수 있어요
+              </p>
+            </div>
 
             <ul className="flex flex-col gap-3">
               {result.stages.map((stageResult, index) =>
@@ -2000,6 +2254,13 @@ function ResultView({
                 );
               })}
             </Reorder.Group>
+            <button
+              type="button"
+              onClick={onAddStage}
+              className="mt-3 flex h-12 w-full items-center justify-center rounded-xl border border-dashed border-zinc-300 text-base font-medium text-zinc-500 dark:border-zinc-700 dark:text-zinc-400"
+            >
+              + 단계 추가
+            </button>
           </div>
         </div>
       )}

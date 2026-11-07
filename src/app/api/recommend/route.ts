@@ -1,10 +1,14 @@
 import { NextResponse } from "next/server";
 import {
   availableCatalog,
+  buildFillPrompt,
   buildPlanPrompt,
   buildPrompt,
+  countFillSlots,
+  parseFill,
   parsePicks,
   parsePlan,
+  type AiFillRequest,
   type AiPlanRequest,
   type AiRecommendRequest,
 } from "@/lib/aiRecommend";
@@ -80,6 +84,27 @@ function isValidPlanRequest(body: unknown): body is AiPlanRequest {
     typeof b.themeNote === "string" &&
     b.themeNote.length <= 500
   );
+}
+
+function isValidFillRequest(body: unknown): body is AiFillRequest {
+  if (!body || typeof body !== "object") return false;
+  const b = body as Partial<AiFillRequest>;
+  if (b.mode !== "fill") return false;
+  if (typeof b.themeNote !== "string" || b.themeNote.length > 500) return false;
+  if (
+    !Array.isArray(b.stages) ||
+    b.stages.length === 0 ||
+    b.stages.length > 12
+  ) {
+    return false;
+  }
+  const ok = b.stages.every(
+    (s) =>
+      s &&
+      (s.label === null ||
+        (typeof s.label === "string" && s.label.length <= 100)),
+  );
+  return ok && countFillSlots(b.stages) >= 1;
 }
 
 function isValidRequest(body: unknown): body is AiRecommendRequest {
@@ -166,6 +191,15 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: "upstream" }, { status: 502 });
       }
       return NextResponse.json({ stages: parsePlan(text) });
+    }
+    if (isValidFillRequest(body)) {
+      const text = await askModel(apiKey, buildFillPrompt(body), PLAN_SCHEMA);
+      if (text === null) {
+        return NextResponse.json({ error: "upstream" }, { status: 502 });
+      }
+      return NextResponse.json({
+        stages: parseFill(text, countFillSlots(body.stages)),
+      });
     }
     if (!isValidRequest(body)) {
       return NextResponse.json({ error: "bad-request" }, { status: 400 });
