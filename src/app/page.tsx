@@ -228,16 +228,6 @@ function loadPlanDate(): string {
   return today;
 }
 
-const WEEKDAY_NAMES = ["일", "월", "화", "수", "목", "금", "토"];
-
-/** 카드에 보여줄 운영 시간 문구. 예: "10:00–18:00 · 매주 월요일 휴무" */
-function formatOpeningHours(place: Place): string {
-  const days = place.closedDays.map((d) => `${WEEKDAY_NAMES[d]}요일`).join("·");
-  return `${place.openTime}–${place.closeTime} · ${
-    days ? `매주 ${days} 휴무` : "휴무일 없음"
-  }`;
-}
-
 /** 0~30시를 화면 문구로. 24시 이후는 "다음날 …"로 보여준다. 예: 14 → 오후 2시, 26 → 다음날 오전 2시 */
 function hourLabel(hour: number): string {
   const day = hour >= 24 ? "다음날 " : "";
@@ -521,6 +511,7 @@ function CourseBuilder() {
       startHour !== null ||
       endHour !== null;
     let working = stages.filter((s) => !isUnsetStage(s));
+    let plannedStages: Stage[] | null = null;
     if (
       !wantsAi ||
       (!needsPlan && !working.some((s) => s.kind === "recommend"))
@@ -555,7 +546,8 @@ function CourseBuilder() {
             subCategory: p.subCategory,
           }));
         // 출발지는 그대로 두고, 이어서 AI가 짠 단계를 붙인다(비어 있던 지정 단계는 대체).
-        setStages((prev) => [...prev.filter((s) => s.isOrigin), ...newStages]);
+        // 입력 화면에 단계가 비쳐 보이지 않도록, 결과 화면으로 넘어가는 순간에 함께 반영한다.
+        plannedStages = newStages;
         working = [...stages.filter((s) => s.isOrigin), ...newStages].filter(
           (s) => !isUnsetStage(s),
         );
@@ -578,10 +570,28 @@ function CourseBuilder() {
       } catch {
         showAiMessage("AI 추천을 불러오지 못해 기본 추천으로 보여드려요.");
       }
+      if (plannedStages) {
+        const added = plannedStages;
+        setStages((prev) => [...prev.filter((s) => s.isOrigin), ...added]);
+      }
       setShowResult(true);
     } finally {
       setMakingCourse(false);
     }
+  }
+
+  /** 결과 화면에서 끌어 바꾼 순서를 일정 단계에 반영한다(출발지는 맨 앞 고정, 나머지는 뒤에 그대로). */
+  function reorderStagesById(orderedIds: string[]) {
+    setStages((prev) => {
+      const origin = prev.filter((s) => s.isOrigin);
+      const moved = orderedIds
+        .map((id) => prev.find((s) => s.id === id))
+        .filter((s): s is Stage => s !== undefined);
+      const rest = prev.filter(
+        (s) => !s.isOrigin && !orderedIds.includes(s.id),
+      );
+      return [...origin, ...moved, ...rest];
+    });
   }
 
   function replaceRecommendStage(stageId: string, placeId: string) {
@@ -624,6 +634,7 @@ function CourseBuilder() {
           onRequestChangeDesignated={(stageId) =>
             setDesignatedEditTarget(stageId)
           }
+          onReorderStages={reorderStagesById}
           onDecideRoute={() => setNavigating(true)}
         />
       ) : onHome ? (
@@ -1699,12 +1710,45 @@ function DragHandle({
   );
 }
 
+/** 결과 화면에서 끌어서 순서를 바꿀 수 있는 한 칸. 손잡이(⠿)를 잡고 끈다. */
+function ReorderableResultItem({
+  id,
+  children,
+}: {
+  id: string;
+  children: (handle: React.ReactNode) => React.ReactNode;
+}) {
+  const dragControls = useDragControls();
+  const handle = (
+    <button
+      type="button"
+      aria-label="눌러서 순서 변경"
+      onPointerDown={(e) => dragControls.start(e)}
+      style={{ touchAction: "none" }}
+      className="flex h-9 w-7 shrink-0 cursor-grab items-center justify-center text-xl text-zinc-400 active:cursor-grabbing dark:text-zinc-500"
+    >
+      ⠿
+    </button>
+  );
+  return (
+    <Reorder.Item
+      value={id}
+      dragListener={false}
+      dragControls={dragControls}
+      className="flex flex-col gap-3 bg-white dark:bg-black"
+    >
+      {children(handle)}
+    </Reorder.Item>
+  );
+}
+
 function ResultView({
   result,
   avatarPoint,
   onBack,
   onReplace,
   onRequestChangeDesignated,
+  onReorderStages,
   onDecideRoute,
 }: {
   result: CourseResult;
@@ -1712,6 +1756,8 @@ function ResultView({
   onBack: () => void;
   onReplace: (stageId: string, placeId: string) => void;
   onRequestChangeDesignated: (stageId: string) => void;
+  /** 출발지를 뺀 단계 id를 새 순서대로 넘긴다. */
+  onReorderStages: (orderedIds: string[]) => void;
   onDecideRoute: () => void;
 }) {
   const [openStageId, setOpenStageId] = useState<string | null>(null);
@@ -1757,6 +1803,106 @@ function ResultView({
     result.stages[failedIndex + 1]?.kind === "designated"
       ? result.stages[failedIndex + 1]
       : null;
+
+  const movableIds = result.stages
+    .filter((r) => !r.stage.isOrigin)
+    .map((r) => r.stage.id);
+
+  function renderStage(
+    stageResult: CourseResult["stages"][number],
+    index: number,
+    handle: React.ReactNode,
+  ) {
+    return (
+      <>
+        {index > 0 && stageResult.travelMinutesFromPrevious !== null && (
+          <p
+            className={`text-center text-sm ${
+              stageResult.kind === "designated" && stageResult.travelExceedsMax
+                ? "font-medium text-amber-600 dark:text-amber-400"
+                : "text-zinc-400 dark:text-zinc-500"
+            }`}
+          >
+            도보 약 {Math.round(stageResult.travelMinutesFromPrevious)}분
+            {stageResult.kind === "designated" && stageResult.travelExceedsMax
+              ? " · 설정보다 길어요"
+              : ""}
+          </p>
+        )}
+
+        {stageResult.kind === "recommend" && stageResult.selected && (
+          <div className="flex flex-col gap-0.5 rounded-xl border border-zinc-300 p-4 dark:border-zinc-700">
+            <div className="flex items-start justify-between gap-2">
+              <div className="flex flex-1 items-center gap-1">
+                {handle}
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <span className="text-lg font-semibold text-black dark:text-white">
+                    {stageResult.selected.name}
+                  </span>
+                  <span className="w-fit rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+                    {stageResult.selected.category}
+                    {stageResult.selected.subCategory
+                      ? ` · ${stageResult.selected.subCategory}`
+                      : ""}
+                  </span>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setOpenStageId(stageResult.stage.id)}
+                className="h-9 shrink-0 rounded-lg border border-zinc-300 px-3 text-sm font-medium text-zinc-600 dark:border-zinc-700 dark:text-zinc-300"
+              >
+                교체
+              </button>
+            </div>
+            <span className="text-sm text-zinc-600 dark:text-zinc-400">
+              ★ {stageResult.selected.rating.toFixed(1)} · 리뷰{" "}
+              {stageResult.selected.reviewCount.toLocaleString()}개
+            </span>
+          </div>
+        )}
+
+        {stageResult.kind === "designated" && (
+          <div className="flex flex-col gap-2 rounded-xl border border-zinc-300 p-4 dark:border-zinc-700">
+            <div className="flex items-start justify-between gap-2">
+              <div className="flex flex-1 items-center gap-1">
+                {handle}
+                <div className="flex flex-col gap-1">
+                  <span className="w-fit rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+                    지정 · {positionLabel(index, result.stages.length)}
+                  </span>
+                  <span className="text-lg font-semibold text-black dark:text-white">
+                    {stageResult.selected.name}
+                  </span>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => onRequestChangeDesignated(stageResult.stage.id)}
+                className="h-9 shrink-0 rounded-lg border border-zinc-300 px-3 text-sm font-medium text-zinc-600 dark:border-zinc-700 dark:text-zinc-300"
+              >
+                변경
+              </button>
+            </div>
+            <span className="text-sm text-zinc-500 dark:text-zinc-500">
+              {stageResult.selected.address}
+            </span>
+            <a
+              href={naverMapLinkFor(stageResult.selected)}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-sm font-medium text-blue-600 dark:text-blue-400"
+            >
+              네이버맵에서 보기
+            </a>
+            <span className="text-sm text-zinc-500 dark:text-zinc-500">
+              🕒 운영 시간 정보 없음
+            </span>
+          </div>
+        )}
+      </>
+    );
+  }
 
   return (
     <div className="flex h-screen w-full flex-col bg-white dark:bg-black">
@@ -1827,102 +1973,33 @@ function ResultView({
             </p>
 
             <ul className="flex flex-col gap-3">
-              {result.stages.map((stageResult, index) => (
-                <li key={stageResult.stage.id} className="flex flex-col gap-3">
-                  {index > 0 &&
-                    stageResult.travelMinutesFromPrevious !== null && (
-                      <p
-                        className={`text-center text-sm ${
-                          stageResult.kind === "designated" &&
-                          stageResult.travelExceedsMax
-                            ? "font-medium text-amber-600 dark:text-amber-400"
-                            : "text-zinc-400 dark:text-zinc-500"
-                        }`}
-                      >
-                        도보 약{" "}
-                        {Math.round(stageResult.travelMinutesFromPrevious)}분
-                        {stageResult.kind === "designated" &&
-                        stageResult.travelExceedsMax
-                          ? " · 설정보다 길어요"
-                          : ""}
-                      </p>
-                    )}
-
-                  {stageResult.kind === "recommend" && stageResult.selected && (
-                    <div className="flex flex-col gap-2 rounded-xl border border-zinc-300 p-4 dark:border-zinc-700">
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="flex flex-col gap-1">
-                          <span className="w-fit rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
-                            {stageResult.selected.category}
-                            {stageResult.selected.subCategory
-                              ? ` · ${stageResult.selected.subCategory}`
-                              : ""}
-                          </span>
-                          <span className="text-lg font-semibold text-black dark:text-white">
-                            {stageResult.selected.name}
-                          </span>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => setOpenStageId(stageResult.stage.id)}
-                          className="h-9 shrink-0 rounded-lg border border-zinc-300 px-3 text-sm font-medium text-zinc-600 dark:border-zinc-700 dark:text-zinc-300"
-                        >
-                          교체
-                        </button>
-                      </div>
-                      <span className="text-sm text-zinc-600 dark:text-zinc-400">
-                        ★ {stageResult.selected.rating.toFixed(1)} · 리뷰{" "}
-                        {stageResult.selected.reviewCount.toLocaleString()}개
-                      </span>
-                      <span className="text-sm text-zinc-500 dark:text-zinc-500">
-                        {stageResult.selected.description}
-                      </span>
-                      <span className="text-sm text-zinc-600 dark:text-zinc-400">
-                        🕒 {formatOpeningHours(stageResult.selected)}
-                      </span>
-                    </div>
-                  )}
-
-                  {stageResult.kind === "designated" && (
-                    <div className="flex flex-col gap-2 rounded-xl border border-zinc-300 p-4 dark:border-zinc-700">
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="flex flex-col gap-1">
-                          <span className="w-fit rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
-                            지정 · {positionLabel(index, result.stages.length)}
-                          </span>
-                          <span className="text-lg font-semibold text-black dark:text-white">
-                            {stageResult.selected.name}
-                          </span>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            onRequestChangeDesignated(stageResult.stage.id)
-                          }
-                          className="h-9 shrink-0 rounded-lg border border-zinc-300 px-3 text-sm font-medium text-zinc-600 dark:border-zinc-700 dark:text-zinc-300"
-                        >
-                          변경
-                        </button>
-                      </div>
-                      <span className="text-sm text-zinc-500 dark:text-zinc-500">
-                        {stageResult.selected.address}
-                      </span>
-                      <a
-                        href={naverMapLinkFor(stageResult.selected)}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-sm font-medium text-blue-600 dark:text-blue-400"
-                      >
-                        네이버맵에서 보기
-                      </a>
-                      <span className="text-sm text-zinc-500 dark:text-zinc-500">
-                        🕒 운영 시간 정보 없음
-                      </span>
-                    </div>
-                  )}
-                </li>
-              ))}
+              {result.stages.map((stageResult, index) =>
+                stageResult.stage.isOrigin ? (
+                  <li
+                    key={stageResult.stage.id}
+                    className="flex flex-col gap-3"
+                  >
+                    {renderStage(stageResult, index, null)}
+                  </li>
+                ) : null,
+              )}
             </ul>
+            <Reorder.Group
+              axis="y"
+              values={movableIds}
+              onReorder={onReorderStages}
+              className="mt-3 flex flex-col gap-3"
+            >
+              {movableIds.map((id) => {
+                const index = result.stages.findIndex((r) => r.stage.id === id);
+                const stageResult = result.stages[index];
+                return (
+                  <ReorderableResultItem key={id} id={id}>
+                    {(handle) => renderStage(stageResult, index, handle)}
+                  </ReorderableResultItem>
+                );
+              })}
+            </Reorder.Group>
           </div>
         </div>
       )}
