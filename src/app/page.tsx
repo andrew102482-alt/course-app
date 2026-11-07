@@ -1830,7 +1830,8 @@ function DesignatedPlaceSheet({
   onSubmit: (place: DesignatedPlace) => void;
 }) {
   const [query, setQuery] = useState("");
-  const [mapPickOpen, setMapPickOpen] = useState(false);
+  // 지도 창: 현재 위치에서 시작(current) / 빈 지도에서 시작(free) / 닫힘(null).
+  const [mapPick, setMapPick] = useState<"current" | "free" | null>(null);
   const results = useMemo(() => searchPlaces(query), [query]);
   const hasQuery = query.trim().length > 0;
 
@@ -1888,14 +1889,14 @@ function DesignatedPlaceSheet({
             <button
               type="button"
               disabled={!currentPlace}
-              onClick={() => currentPlace && pick(currentPlace)}
+              onClick={() => currentPlace && setMapPick("current")}
               className="flex h-12 flex-1 items-center justify-center gap-1.5 rounded-xl border border-zinc-300 text-sm font-medium text-black disabled:opacity-50 dark:border-zinc-700 dark:text-white"
             >
               <span aria-hidden>📍</span>현재 위치로 지정
             </button>
             <button
               type="button"
-              onClick={() => setMapPickOpen(true)}
+              onClick={() => setMapPick("free")}
               className="flex h-12 flex-1 items-center justify-center gap-1.5 rounded-xl border border-zinc-300 text-sm font-medium text-black dark:border-zinc-700 dark:text-white"
             >
               <span aria-hidden>🗺️</span>지도에서 지정
@@ -1992,18 +1993,29 @@ function DesignatedPlaceSheet({
         </p>
       </div>
 
-      {mapPickOpen && (
+      {mapPick && (
         <MapPickSheet
-          onClose={() => setMapPickOpen(false)}
-          onConfirm={(point) =>
-            pick({
-              id: MAP_PICK_PLACE_ID,
-              name: "지도에서 고른 위치",
-              address: "지도에서 직접 고른 위치",
-              lat: point.lat,
-              lng: point.lng,
-            })
-          }
+          title={mapPick === "current" ? "현재 위치 확인" : "지도에서 지정"}
+          initial={mapPick === "current" ? currentLocation : null}
+          onClose={() => setMapPick(null)}
+          onConfirm={(point) => {
+            // 현재 위치 그대로면 "현재 위치", 지도에서 옮기거나 새로 골랐으면 "지도에서 고른 위치".
+            const unmoved =
+              currentPlace !== null &&
+              point.lat === currentPlace.lat &&
+              point.lng === currentPlace.lng;
+            pick(
+              unmoved
+                ? currentPlace
+                : {
+                    id: MAP_PICK_PLACE_ID,
+                    name: "지도에서 고른 위치",
+                    address: "지도에서 직접 고른 위치",
+                    lat: point.lat,
+                    lng: point.lng,
+                  },
+            );
+          }}
         />
       )}
     </div>
@@ -2022,14 +2034,19 @@ const PICK_MAP_BOUNDS = {
 };
 
 function MapPickSheet({
+  title,
+  initial,
   onClose,
   onConfirm,
 }: {
+  title: string;
+  /** 처음부터 꽂아 둘 위치(현재 위치). 없으면 빈 지도에서 시작한다. */
+  initial: { lat: number; lng: number } | null;
   onClose: () => void;
   onConfirm: (point: { lat: number; lng: number }) => void;
 }) {
   const [picked, setPicked] = useState<{ lat: number; lng: number } | null>(
-    null,
+    initial,
   );
   const drawable = MAP_VIEW_SIZE - MAP_MARGIN * 2;
   const b = PICK_MAP_BOUNDS;
@@ -2046,7 +2063,17 @@ function MapPickSheet({
     });
   }
 
-  const pin = picked ? projectToMap({ ...picked, name: "" }, b) : null;
+  const pinRaw = picked ? projectToMap({ ...picked, name: "" }, b) : null;
+  // 임시 지도(종로 일대) 밖이면 핀을 그리지 않고 안내만 한다.
+  const pin =
+    pinRaw &&
+    pinRaw.x >= 0 &&
+    pinRaw.x <= MAP_VIEW_SIZE &&
+    pinRaw.y >= 0 &&
+    pinRaw.y <= MAP_VIEW_SIZE
+      ? pinRaw
+      : null;
+  const pinOffMap = picked !== null && pin === null;
 
   return (
     <div
@@ -2055,13 +2082,13 @@ function MapPickSheet({
     >
       <div
         role="dialog"
-        aria-label="지도에서 지정"
+        aria-label={title}
         onClick={(e) => e.stopPropagation()}
         className="flex w-full max-w-md flex-col gap-3 rounded-t-2xl bg-white p-4 dark:bg-zinc-900"
       >
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-bold text-black dark:text-white">
-            지도에서 지정
+            {title}
           </h2>
           <button
             type="button"
@@ -2073,8 +2100,16 @@ function MapPickSheet({
           </button>
         </div>
         <p className="text-sm text-zinc-600 dark:text-zinc-400">
-          지도를 눌러 위치를 골라 주세요.
+          {initial
+            ? "빨간 핀이 현재 위치예요. 지도를 눌러 위치를 옮길 수 있어요."
+            : "지도를 눌러 위치를 골라 주세요."}
         </p>
+        {pinOffMap && (
+          <p className="text-xs text-amber-600 dark:text-amber-400">
+            현재 위치가 임시 지도(종로 일대) 밖이라 핀이 보이지 않아요. 그대로
+            지정하거나 지도를 눌러 옮길 수 있어요.
+          </p>
+        )}
         <svg
           viewBox={`0 0 ${MAP_VIEW_SIZE} ${MAP_VIEW_SIZE}`}
           onClick={onTap}
