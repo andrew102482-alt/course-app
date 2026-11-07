@@ -3441,6 +3441,10 @@ function NavigateView({
   const [approachOff, setApproachOff] = useState(false);
   // 뒤로가기를 누르면 "안내를 멈출까요?" 확인 창을 먼저 띄운다.
   const [askStop, setAskStop] = useState(false);
+  // 종료를 누르면 "안내를 종료할까요?" → "추억에 저장할까요?" 순서로 묻는다.
+  const [askEnd, setAskEnd] = useState(false);
+  const [askMemory, setAskMemory] = useState(false);
+  const [memoryFailed, setMemoryFailed] = useState(false);
 
   return (
     <div className="relative h-screen w-full bg-white dark:bg-black">
@@ -3461,7 +3465,7 @@ function NavigateView({
           </button>
           <button
             type="button"
-            onClick={onEnd}
+            onClick={() => setAskEnd(true)}
             className="h-10 rounded-full bg-black px-4 text-sm font-medium text-white shadow-sm dark:bg-white dark:text-black"
           >
             종료
@@ -3477,6 +3481,109 @@ function NavigateView({
           출발지까지 동선 끄기
         </label>
       </div>
+
+      {askEnd && (
+        <div
+          className="fixed inset-0 z-20 flex items-center justify-center bg-black/50 px-6"
+          onClick={() => setAskEnd(false)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="안내 종료 확인"
+            onClick={(e) => e.stopPropagation()}
+            className="flex w-full max-w-sm flex-col gap-4 rounded-2xl bg-white p-5 dark:bg-zinc-900"
+          >
+            <h2 className="text-lg font-bold text-black dark:text-white">
+              안내를 종료할까요?
+            </h2>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setAskEnd(false);
+                  setMemoryFailed(false);
+                  setAskMemory(true);
+                }}
+                className="h-12 flex-1 rounded-xl bg-black text-base font-semibold text-white dark:bg-white dark:text-black"
+              >
+                예
+              </button>
+              <button
+                type="button"
+                onClick={() => setAskEnd(false)}
+                className="h-12 flex-1 rounded-xl border border-zinc-300 text-base font-semibold text-black dark:border-zinc-700 dark:text-white"
+              >
+                아니오
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {askMemory && (
+        <div
+          className="fixed inset-0 z-20 flex items-center justify-center bg-black/50 px-6"
+          onClick={() => setAskMemory(false)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="추억 저장 확인"
+            onClick={(e) => e.stopPropagation()}
+            className="flex w-full max-w-sm flex-col gap-4 rounded-2xl bg-white p-5 dark:bg-zinc-900"
+          >
+            <div className="flex items-start justify-between gap-2">
+              <h2 className="text-lg font-bold text-black dark:text-white">
+                추억에 저장할까요?
+              </h2>
+              <button
+                type="button"
+                onClick={() => setAskMemory(false)}
+                aria-label="닫기"
+                className="-mr-1 -mt-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-zinc-300 dark:border-zinc-700 dark:text-white"
+              >
+                ✕
+              </button>
+            </div>
+            {memoryFailed && (
+              <p
+                role="alert"
+                className="text-sm text-red-600 dark:text-red-400"
+              >
+                저장하지 못했어요. 브라우저 저장 공간을 확인해 주세요.
+              </p>
+            )}
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  const course = toSavedCourse(result);
+                  if (course && saveCourse(course)) {
+                    setAskMemory(false);
+                    onEnd();
+                  } else {
+                    setMemoryFailed(true);
+                  }
+                }}
+                className="h-12 flex-1 rounded-xl bg-black text-base font-semibold text-white dark:bg-white dark:text-black"
+              >
+                예
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setAskMemory(false);
+                  onEnd();
+                }}
+                className="h-12 flex-1 rounded-xl border border-zinc-300 text-base font-semibold text-black dark:border-zinc-700 dark:text-white"
+              >
+                아니오
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {askStop && (
         <div
