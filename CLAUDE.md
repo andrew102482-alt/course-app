@@ -30,7 +30,7 @@
 ## 나중에 꼭 해야 할 일 (지금은 스텁/임시 처리)
 이 두 가지는 당장 하지 않지만 잊지 말고 있다가, 요청받으면 바로 진행한다.
 
-- **네이버 클라우드 플랫폼 지도 API** — 2026-11-07 키 연결 완료(`.env.local`의 `NCP_MAPS_CLIENT_ID/SECRET`, 서버 통로 `src/app/api/maps/*`, 지도 판 `src/components/NaverMapCanvas.tsx`). 지도 화면·주소 검색(Geocoding)은 동작, 길찾기(Directions)는 권한 없음(403)으로 직선 대체, 장소 이름 검색은 아직 예시 데이터. 아래 두 줄은 연결 전 기록이다.
+- **네이버 클라우드 플랫폼 지도 API** — 2026-11-07 키 연결 완료(`.env.local`의 `NCP_MAPS_CLIENT_ID/SECRET`, 서버 통로 `src/app/api/maps/*`, 지도 판 `src/components/NaverMapCanvas.tsx`). 지도 화면·주소 검색(Geocoding)은 동작, 길찾기(도보 경로)와 장소 이름 검색은 TMAP(`TMAP_APP_KEY`, `src/app/api/tmap/search`, `src/app/api/maps/directions`)으로 연결 완료. 아래 두 줄은 연결 전 기록이다.
   - '장소 직접 지정'은 네이버 장소 검색 대신, 이름·주소·위도·경도를 직접 입력하는 임시 폼으로 구현했다. 키가 발급되면 이 폼을 실제 네이버 장소 검색(Geocoding API)으로 교체한다.
   - 네이버 지도 링크(`https://map.naver.com/p/search/...`)는 키 없이 되는 공개 URL이라 그대로 쓴다. 지도 화면(`openapi.map.naver.com/openapi/v3/maps.js`, SDK 필요)은 키가 있어야 하므로 보류, 지금은 좌표를 직접 투영해 그리는 임시 지도(StubMap/RouteMap/AvatarMap)로 대신한다.
 - **로그인 기능** — 네이버 로그인(OAuth)을 서버 통로(`src/app/api/auth/**`, `src/lib/session.ts`)로 연결했다. 로그인하면 서명된 쿠키로 30일 유지, "로그인 없이 둘러보기"는 체험용. 키는 `.env.local`의 `NAVER_CLIENT_ID`/`NAVER_CLIENT_SECRET`, 개발자센터 Callback URL은 `<주소>/api/auth/naver/callback`. 배포 시 Vercel 환경변수와 Callback URL을 추가해야 한다.

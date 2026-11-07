@@ -1911,6 +1911,11 @@ function DesignatedPlaceSheet({
     q: string;
     items: PlaceSearchResult[];
   } | null>(null);
+  // TMAP 장소 이름 검색 결과(같은 방식으로 검색어와 함께 보관).
+  const [tmap, setTmap] = useState<{
+    q: string;
+    items: PlaceSearchResult[];
+  } | null>(null);
   const trimmedQuery = query.trim();
   useEffect(() => {
     if (trimmedQuery.length < 2) return;
@@ -1924,19 +1929,30 @@ function DesignatedPlaceSheet({
           setGeo({ q: trimmedQuery, items: d.results ?? [] }),
         )
         .catch(() => {});
+      fetch(`/api/tmap/search?q=${encodeURIComponent(trimmedQuery)}`, {
+        signal: ctrl.signal,
+      })
+        .then((r) => (r.ok ? r.json() : { results: [] }))
+        .then((d: { results?: PlaceSearchResult[] }) =>
+          setTmap({ q: trimmedQuery, items: d.results ?? [] }),
+        )
+        .catch(() => {});
     }, 350);
     return () => {
       clearTimeout(timer);
       ctrl.abort();
     };
   }, [trimmedQuery]);
-  const results = useMemo(
-    () => [
-      ...searchPlaces(query),
+  // 실제 검색 결과(장소 이름은 TMAP, 주소는 네이버)를 먼저 보여준다.
+  // 아직 안 왔거나 둘 다 비어 있으면 예시 데이터로 대신한다(키가 없을 때도 동작하게).
+  const results = useMemo(() => {
+    const real = [
+      ...(tmap && tmap.q === trimmedQuery ? tmap.items : []),
       ...(geo && geo.q === trimmedQuery ? geo.items : []),
-    ],
-    [query, geo, trimmedQuery],
-  );
+    ];
+    return real.length > 0 ? real : searchPlaces(query);
+  }, [query, geo, tmap, trimmedQuery]);
+
   const hasQuery = query.trim().length > 0;
 
   function pick(place: DesignatedPlace) {
@@ -1985,7 +2001,7 @@ function DesignatedPlaceSheet({
             autoFocus
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="장소 이름 또는 주소 (예: 안국역)"
+            placeholder="장소 이름 또는 주소 (예: 경복궁)"
             aria-label="장소 이름"
             className="h-12 w-full rounded-xl border border-zinc-300 bg-white px-4 text-base text-black dark:border-zinc-700 dark:bg-zinc-900 dark:text-white"
           />
@@ -3563,18 +3579,19 @@ function RouteMap({
       id: string,
       from: LatLngLike,
       to: LatLngLike,
-      road: LatLngLike[] | null,
+      road: { path: LatLngLike[]; minutes: number | null } | null,
       color: string,
       dashed: boolean,
     ) => {
-      const path = road ? [from, ...road, to] : [from, to];
+      const path = road ? [from, ...road.path, to] : [from, to];
       const m = path[Math.floor(path.length / 2)];
       lines.push({ id, path, color, dashed });
       bubbles.push({
         id: `b-${id}`,
         lat: road ? m.lat : (from.lat + to.lat) / 2,
         lng: road ? m.lng : (from.lng + to.lng) / 2,
-        text: `도보 ${Math.round(walkingMinutesBetween(from, to))}분`,
+        // TMAP이 알려준 실제 도보 시간이 있으면 그 값을, 없으면 직선거리 기준 추정값을 쓴다.
+        text: `도보 ${Math.round(road?.minutes ?? walkingMinutesBetween(from, to))}분`,
       });
     };
     legPairs.forEach((leg, i) =>
