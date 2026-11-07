@@ -3283,9 +3283,12 @@ function StubMap({
 function RouteMap({
   stages,
   avatarPoint,
+  showApproach = false,
 }: {
   stages: StageResult[];
   avatarPoint?: { lat: number; lng: number } | null;
+  /** true면 내 위치에서 첫 장소(출발지)까지 가는 길 안내 동선을 점선으로 함께 그린다. */
+  showApproach?: boolean;
 }) {
   const [zoomPan, zoomSvgRef] = useZoomPan();
 
@@ -3337,6 +3340,26 @@ function RouteMap({
             strokeWidth={3}
             className="text-blue-500 dark:text-blue-400"
           />
+        )}
+
+        {showApproach && avatarProjected && avatarMapPoint && (
+          <>
+            <line
+              x1={avatarProjected.x}
+              y1={avatarProjected.y}
+              x2={projected[0].x}
+              y2={projected[0].y}
+              stroke="currentColor"
+              strokeWidth={3}
+              strokeDasharray="6 5"
+              className="text-emerald-500 dark:text-emerald-400"
+            />
+            <WalkBubble
+              from={avatarProjected}
+              to={projected[0]}
+              minutes={walkingMinutesBetween(avatarMapPoint, points[0])}
+            />
+          </>
         )}
 
         {projected.slice(1).map((end, i) => (
@@ -3414,25 +3437,43 @@ function NavigateView({
   onBack: () => void;
   onEnd: () => void;
 }) {
+  // 체크하면 "내 위치 → 출발지" 길 안내 동선을 끈다(기본은 켜짐).
+  const [approachOff, setApproachOff] = useState(false);
+
   return (
     <div className="relative h-screen w-full bg-white dark:bg-black">
-      <RouteMap stages={result.stages} avatarPoint={avatarPoint} />
+      <RouteMap
+        stages={result.stages}
+        avatarPoint={avatarPoint}
+        showApproach={!approachOff}
+      />
 
-      <div className="absolute right-3 top-3 flex gap-2">
-        <button
-          type="button"
-          onClick={onBack}
-          className="h-10 rounded-full border border-zinc-300 bg-white/90 px-4 text-sm font-medium text-zinc-700 shadow-sm dark:border-zinc-700 dark:bg-zinc-900/90 dark:text-zinc-200"
-        >
-          뒤로가기
-        </button>
-        <button
-          type="button"
-          onClick={onEnd}
-          className="h-10 rounded-full bg-black px-4 text-sm font-medium text-white shadow-sm dark:bg-white dark:text-black"
-        >
-          종료
-        </button>
+      <div className="absolute right-3 top-3 flex flex-col items-end gap-2">
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={onBack}
+            className="h-10 rounded-full border border-zinc-300 bg-white/90 px-4 text-sm font-medium text-zinc-700 shadow-sm dark:border-zinc-700 dark:bg-zinc-900/90 dark:text-zinc-200"
+          >
+            뒤로가기
+          </button>
+          <button
+            type="button"
+            onClick={onEnd}
+            className="h-10 rounded-full bg-black px-4 text-sm font-medium text-white shadow-sm dark:bg-white dark:text-black"
+          >
+            종료
+          </button>
+        </div>
+        <label className="flex h-9 items-center gap-2 rounded-full border border-zinc-300 bg-white/90 px-3 text-sm font-medium text-zinc-700 shadow-sm dark:border-zinc-700 dark:bg-zinc-900/90 dark:text-zinc-200">
+          <input
+            type="checkbox"
+            checked={approachOff}
+            onChange={(e) => setApproachOff(e.target.checked)}
+            className="h-4 w-4"
+          />
+          출발지까지 동선 끄기
+        </label>
       </div>
     </div>
   );
