@@ -26,6 +26,8 @@ export type MapLine = {
 
 export type MapBubble = LatLng & { id: string; text: string };
 
+const EMPTY_MARKERS: MapMarker[] = [];
+
 function esc(s: string): string {
   return s.replace(
     /[&<>"']/g,
@@ -96,23 +98,29 @@ function markerHtml(m: MapMarker): { html: string; ax: number; ay: number } {
  * - fitKey가 바뀔 때마다 표시한 모든 점이 보이게 맞춘다(undefined면 맞추지 않고 initialCenter에서 시작).
  */
 export default function NaverMapCanvas({
-  markers,
+  markers = EMPTY_MARKERS,
   lines = [],
   bubbles = [],
   fitKey,
   initialCenter,
   initialZoom = 16,
   onMapClick,
+  onCenterChange,
+  onMovingChange,
   ariaLabel,
   className = "h-full w-full",
 }: {
-  markers: MapMarker[];
+  markers?: MapMarker[];
   lines?: MapLine[];
   bubbles?: MapBubble[];
   fitKey?: string;
   initialCenter?: LatLng;
   initialZoom?: number;
   onMapClick?: (p: LatLng) => void;
+  /** 지도 이동이 멈출 때마다 지도 한가운데 좌표를 알려준다(택시 앱처럼 가운데 핀 방식에 쓴다). */
+  onCenterChange?: (p: LatLng) => void;
+  /** 지도를 끄는 중이면 true, 멈추면 false. */
+  onMovingChange?: (moving: boolean) => void;
   ariaLabel?: string;
   className?: string;
 }) {
@@ -120,10 +128,14 @@ export default function NaverMapCanvas({
   const mapRef = useRef<any>(null);
   const overlaysRef = useRef<any[]>([]);
   const clickRef = useRef(onMapClick);
+  const centerRef = useRef(onCenterChange);
+  const movingRef = useRef(onMovingChange);
   const dataRef = useRef({ markers, lines, bubbles });
   // 최신 값을 다른 effect들이 읽을 수 있게, 가장 먼저 실행되는 effect에서 갱신한다.
   useEffect(() => {
     clickRef.current = onMapClick;
+    centerRef.current = onCenterChange;
+    movingRef.current = onMovingChange;
     dataRef.current = { markers, lines, bubbles };
   });
 
@@ -144,6 +156,14 @@ export default function NaverMapCanvas({
     const listener = naver.maps.Event.addListener(map, "click", (e: any) => {
       clickRef.current?.({ lat: e.coord.lat(), lng: e.coord.lng() });
     });
+    const dragStart = naver.maps.Event.addListener(map, "dragstart", () =>
+      movingRef.current?.(true),
+    );
+    const idle = naver.maps.Event.addListener(map, "idle", () => {
+      movingRef.current?.(false);
+      const c = map.getCenter();
+      centerRef.current?.({ lat: c.lat(), lng: c.lng() });
+    });
     const ro = new ResizeObserver(() => {
       const el = boxRef.current;
       if (el) map.setSize(new naver.maps.Size(el.clientWidth, el.clientHeight));
@@ -152,6 +172,8 @@ export default function NaverMapCanvas({
     return () => {
       ro.disconnect();
       naver.maps.Event.removeListener(listener);
+      naver.maps.Event.removeListener(dragStart);
+      naver.maps.Event.removeListener(idle);
       overlaysRef.current.forEach((o) => o.setMap(null));
       overlaysRef.current = [];
       map.destroy();

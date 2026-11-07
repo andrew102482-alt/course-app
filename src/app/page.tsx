@@ -2131,7 +2131,7 @@ function DesignatedPlaceSheet({
           title={mapPick === "current" ? "현재 위치 확인" : "지도에서 지정"}
           initial={mapPick === "current" ? currentLocation : null}
           onClose={() => setMapPick(null)}
-          onConfirm={(point) => {
+          onConfirm={(point, address) => {
             // 현재 위치 그대로면 "현재 위치", 지도에서 옮기거나 새로 골랐으면 "지도에서 고른 위치".
             const unmoved =
               currentPlace !== null &&
@@ -2144,7 +2144,7 @@ function DesignatedPlaceSheet({
                 : {
                     id: MAP_PICK_PLACE_ID,
                     name: "지도에서 고른 위치",
-                    address: "지도에서 직접 고른 위치",
+                    address: address ?? "지도에서 직접 고른 위치",
                     lat: point.lat,
                     lng: point.lng,
                   },
@@ -2177,12 +2177,36 @@ function MapPickSheet({
   /** 처음부터 꽂아 둘 위치(현재 위치). 없으면 빈 지도에서 시작한다. */
   initial: { lat: number; lng: number } | null;
   onClose: () => void;
-  onConfirm: (point: { lat: number; lng: number }) => void;
+  onConfirm: (
+    point: { lat: number; lng: number },
+    address: string | null,
+  ) => void;
 }) {
   const [picked, setPicked] = useState<{ lat: number; lng: number } | null>(
     initial,
   );
   const maps = useNaverMaps();
+  // 지도를 끄는 중이면 핀을 살짝 들어 올린다(택시 앱처럼).
+  const [moving, setMoving] = useState(false);
+  // 핀이 가리키는 곳의 주소(어느 좌표의 주소인지 함께 들고 있다가 지금 위치와 같을 때만 보여준다).
+  const [addr, setAddr] = useState<{ key: string; text: string | null } | null>(
+    null,
+  );
+  const pickedKey = picked ? `${picked.lat},${picked.lng}` : null;
+  useEffect(() => {
+    if (maps !== "ready" || !picked || !pickedKey) return;
+    const ctrl = new AbortController();
+    fetch(`/api/maps/reverse?lat=${picked.lat}&lng=${picked.lng}`, {
+      signal: ctrl.signal,
+    })
+      .then((r) => (r.ok ? r.json() : { address: null }))
+      .then((d: { address: string | null }) =>
+        setAddr({ key: pickedKey, text: d.address }),
+      )
+      .catch(() => {});
+    return () => ctrl.abort();
+  }, [maps, picked, pickedKey]);
+  const addrText = addr && addr.key === pickedKey ? addr.text : null;
   const drawable = MAP_VIEW_SIZE - MAP_MARGIN * 2;
   const b = PICK_MAP_BOUNDS;
 
@@ -2235,9 +2259,13 @@ function MapPickSheet({
           </button>
         </div>
         <p className="text-sm text-zinc-600 dark:text-zinc-400">
-          {initial
-            ? "빨간 핀이 현재 위치예요. 지도를 눌러 위치를 옮길 수 있어요."
-            : "지도를 눌러 위치를 골라 주세요."}
+          {maps === "ready"
+            ? initial
+              ? "핀이 현재 위치예요. 지도를 움직여 핀을 원하는 곳에 맞춰 주세요."
+              : "지도를 움직여 핀을 원하는 곳에 맞춰 주세요."
+            : initial
+              ? "빨간 핀이 현재 위치예요. 지도를 눌러 위치를 옮길 수 있어요."
+              : "지도를 눌러 위치를 골라 주세요."}
         </p>
         {maps !== "ready" && pinOffMap && (
           <p className="text-xs text-amber-600 dark:text-amber-400">
@@ -2246,15 +2274,51 @@ function MapPickSheet({
           </p>
         )}
         {maps === "ready" ? (
-          <NaverMapCanvas
-            ariaLabel="네이버 지도(눌러서 위치 고르기)"
-            className="aspect-square w-full overflow-hidden rounded-xl"
-            initialCenter={initial ?? REGION_CENTER}
-            markers={
-              picked ? [{ id: "pick", ...picked, kind: "pin" as const }] : []
-            }
-            onMapClick={(p) => setPicked(p)}
-          />
+          <div className="relative h-[48vh] max-h-[440px] min-h-[240px] w-full overflow-hidden rounded-xl">
+            <NaverMapCanvas
+              ariaLabel="네이버 지도(움직여서 위치 고르기)"
+              className="h-full w-full"
+              initialCenter={initial ?? REGION_CENTER}
+              initialZoom={17}
+              onMovingChange={setMoving}
+              onCenterChange={(c) => {
+                // 현재 위치 그대로면 값을 그대로 쓴다(미세한 계산 오차로 "옮겼다"고 오해하지 않게).
+                if (
+                  initial &&
+                  Math.abs(c.lat - initial.lat) < 1e-5 &&
+                  Math.abs(c.lng - initial.lng) < 1e-5 &&
+                  (!picked ||
+                    (Math.abs(picked.lat - initial.lat) < 1e-5 &&
+                      Math.abs(picked.lng - initial.lng) < 1e-5))
+                ) {
+                  setPicked(initial);
+                  return;
+                }
+                setPicked(c);
+              }}
+            />
+            {/* 지도 한가운데 고정된 핀: 지도를 움직이면 핀이 가리키는 곳이 바뀐다. */}
+            <div
+              aria-hidden
+              className="pointer-events-none absolute left-1/2 top-1/2 z-10"
+            >
+              <div className="absolute -left-1.5 -top-1 h-2 w-3 rounded-full bg-black/30 blur-[1px]" />
+              <svg
+                width="32"
+                height="44"
+                viewBox="0 0 32 44"
+                className={`absolute -left-4 -top-11 transition-transform duration-150 ${moving ? "-translate-y-2" : ""}`}
+              >
+                <path
+                  d="M16 1C8 1 2 7 2 15c0 10 14 28 14 28s14-18 14-28C30 7 24 1 16 1z"
+                  fill="#ef4444"
+                  stroke="#fff"
+                  strokeWidth="2"
+                />
+                <circle cx="16" cy="15" r="5" fill="#fff" />
+              </svg>
+            </div>
+          </div>
         ) : (
           <svg
             viewBox={`0 0 ${MAP_VIEW_SIZE} ${MAP_VIEW_SIZE}`}
@@ -2309,10 +2373,17 @@ function MapPickSheet({
             )}
           </svg>
         )}
+        {maps === "ready" && (
+          <p className="min-h-5 text-sm font-medium text-black dark:text-white">
+            {moving || !picked
+              ? "위치를 맞추는 중…"
+              : (addrText ?? "주소를 찾을 수 없는 곳이에요")}
+          </p>
+        )}
         <button
           type="button"
-          disabled={!picked}
-          onClick={() => picked && onConfirm(picked)}
+          disabled={!picked || moving}
+          onClick={() => picked && onConfirm(picked, addrText)}
           className="h-12 w-full rounded-xl bg-black text-base font-semibold text-white disabled:opacity-40 dark:bg-white dark:text-black"
         >
           완료
