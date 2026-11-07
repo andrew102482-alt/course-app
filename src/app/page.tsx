@@ -774,6 +774,12 @@ function CourseBuilder() {
     }
   }
 
+  /** 코스 만들기 화면의 일정 단계만 처음 상태(출발지 "상관없음" 하나)로 되돌린다. 날짜·시간·분위기 글·이동시간은 그대로 둔다. */
+  function resetStages() {
+    setStages(ensureOriginStage([]));
+    setOverrides({});
+  }
+
   /** 결과 화면에서 끌어 바꾼 순서를 일정 단계에 반영한다. 맨 위에 온 단계가 출발지가 된다. */
   function reorderStagesById(orderedIds: string[]) {
     setStages((prev) => {
@@ -865,6 +871,7 @@ function CourseBuilder() {
             onMakeCourse={makeCourse}
             makingCourse={makingCourse}
             onBackToHome={() => setOnHome(true)}
+            onReset={resetStages}
           />
         </div>
       )}
@@ -982,6 +989,7 @@ function InputView({
   onMakeCourse,
   makingCourse,
   onBackToHome,
+  onReset,
 }: {
   planDate: string;
   onSetPlanDate: (date: string) => void;
@@ -1001,8 +1009,10 @@ function InputView({
   onMakeCourse: (options?: { originOnly?: boolean }) => void;
   makingCourse: boolean;
   onBackToHome: () => void;
+  onReset: () => void;
 }) {
   const [travelPickerOpen, setTravelPickerOpen] = useState(false);
+  const [askReset, setAskReset] = useState(false);
   const [timePicker, setTimePicker] = useState<"start" | "end" | null>(null);
   const hasNote = themeNote.trim().length > 0;
 
@@ -1162,6 +1172,13 @@ function InputView({
               <li>• &lsquo;상관없음&rsquo;으로 두면 그 칸은 AI가 채워줘요.</li>
             </ul>
           </HelpTip>
+          <button
+            type="button"
+            onClick={() => setAskReset(true)}
+            className="ml-auto flex h-8 items-center gap-1 rounded-lg border border-zinc-300 px-2.5 text-xs font-medium text-zinc-600 dark:border-zinc-700 dark:text-zinc-300"
+          >
+            <span aria-hidden>↺</span>초기화
+          </button>
         </div>
 
         {origin && (
@@ -1232,6 +1249,48 @@ function InputView({
           }}
           onClose={() => setTravelPickerOpen(false)}
         />
+      )}
+
+      {askReset && (
+        <div
+          className="fixed inset-0 z-20 flex items-center justify-center bg-black/50 px-6"
+          onClick={() => setAskReset(false)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="일정 단계 초기화"
+            onClick={(e) => e.stopPropagation()}
+            className="flex w-full max-w-sm flex-col gap-4 rounded-2xl bg-white p-5 dark:bg-zinc-900"
+          >
+            <h2 className="text-lg font-bold text-black dark:text-white">
+              일정 단계를 모두 지울까요?
+            </h2>
+            <p className="text-sm text-zinc-600 dark:text-zinc-400">
+              일정 단계가 처음 상태(출발지 &lsquo;상관없음&rsquo; 하나)로
+              돌아가요. 날짜와 시간, 분위기 글은 그대로예요.
+            </p>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setAskReset(false)}
+                className="h-12 flex-1 rounded-xl border border-zinc-300 text-base font-semibold text-black dark:border-zinc-700 dark:text-white"
+              >
+                취소
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setAskReset(false);
+                  onReset();
+                }}
+                className="h-12 flex-1 rounded-xl bg-black text-base font-semibold text-white dark:bg-white dark:text-black"
+              >
+                초기화
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {askOriginOnly && (
@@ -1324,7 +1383,7 @@ function HelpTip({
         ?
       </button>
       {open && (
-        <div className="basis-full rounded-lg bg-zinc-100 px-3 py-3 text-xs leading-relaxed text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+        <div className="order-last basis-full rounded-lg bg-zinc-100 px-3 py-3 text-xs leading-relaxed text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
           {children}
         </div>
       )}
