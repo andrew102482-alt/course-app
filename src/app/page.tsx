@@ -1233,9 +1233,13 @@ function InputView({
       )}
 
       {askOriginOnly && (
-        <div className="fixed inset-0 z-20 flex items-center justify-center bg-black/50 px-6">
+        <div
+          className="fixed inset-0 z-20 flex items-center justify-center bg-black/50 px-6"
+          onClick={() => setAskOriginOnly(false)}
+        >
           <div
             role="dialog"
+            onClick={(e) => e.stopPropagation()}
             aria-modal="true"
             aria-label="출발지만 추천"
             className="flex w-full max-w-sm flex-col gap-4 rounded-2xl bg-white p-5 dark:bg-zinc-900"
