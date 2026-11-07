@@ -3439,6 +3439,8 @@ function NavigateView({
 }) {
   // 체크하면 "내 위치 → 출발지" 길 안내 동선을 끈다(기본은 켜짐).
   const [approachOff, setApproachOff] = useState(false);
+  // 뒤로가기를 누르면 "안내를 멈출까요?" 확인 창을 먼저 띄운다.
+  const [askStop, setAskStop] = useState(false);
 
   return (
     <div className="relative h-screen w-full bg-white dark:bg-black">
@@ -3452,7 +3454,7 @@ function NavigateView({
         <div className="flex gap-2">
           <button
             type="button"
-            onClick={onBack}
+            onClick={() => setAskStop(true)}
             className="h-10 rounded-full border border-zinc-300 bg-white/90 px-4 text-sm font-medium text-zinc-700 shadow-sm dark:border-zinc-700 dark:bg-zinc-900/90 dark:text-zinc-200"
           >
             뒤로가기
@@ -3475,6 +3477,44 @@ function NavigateView({
           출발지까지 동선 끄기
         </label>
       </div>
+
+      {askStop && (
+        <div
+          className="fixed inset-0 z-20 flex items-center justify-center bg-black/50 px-6"
+          onClick={() => setAskStop(false)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="안내 멈춤 확인"
+            onClick={(e) => e.stopPropagation()}
+            className="flex w-full max-w-sm flex-col gap-4 rounded-2xl bg-white p-5 dark:bg-zinc-900"
+          >
+            <h2 className="text-lg font-bold text-black dark:text-white">
+              안내를 멈출까요?
+            </h2>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setAskStop(false);
+                  onBack();
+                }}
+                className="h-12 flex-1 rounded-xl bg-black text-base font-semibold text-white dark:bg-white dark:text-black"
+              >
+                예
+              </button>
+              <button
+                type="button"
+                onClick={() => setAskStop(false)}
+                className="h-12 flex-1 rounded-xl border border-zinc-300 text-base font-semibold text-black dark:border-zinc-700 dark:text-white"
+              >
+                아니오
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
