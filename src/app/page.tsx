@@ -1252,21 +1252,21 @@ function InputView({
                 type="button"
                 onClick={() => {
                   setAskOriginOnly(false);
-                  onMakeCourse();
-                }}
-                className="h-12 flex-1 rounded-xl border border-zinc-300 text-base font-semibold text-black dark:border-zinc-700 dark:text-white"
-              >
-                아니오
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setAskOriginOnly(false);
                   onMakeCourse({ originOnly: true });
                 }}
                 className="h-12 flex-1 rounded-xl bg-black text-base font-semibold text-white dark:bg-white dark:text-black"
               >
                 예
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setAskOriginOnly(false);
+                  onMakeCourse();
+                }}
+                className="h-12 flex-1 rounded-xl border border-zinc-300 text-base font-semibold text-black dark:border-zinc-700 dark:text-white"
+              >
+                아니오
               </button>
             </div>
           </div>
