@@ -813,9 +813,6 @@ function CourseBuilder() {
           avatarPoint={avatarPoint}
           onBack={leaveResult}
           onReplace={replaceRecommendStage}
-          onRequestChangeDesignated={(stageId) =>
-            setDesignatedEditTarget(stageId)
-          }
           onReorderStages={reorderStagesById}
           onRequestChangeTheme={setChangeStageTarget}
           onRemoveStage={removeStageFromResult}
@@ -2041,7 +2038,6 @@ function ResultView({
   avatarPoint,
   onBack,
   onReplace,
-  onRequestChangeDesignated,
   onReorderStages,
   onRequestChangeTheme,
   onRemoveStage,
@@ -2052,7 +2048,6 @@ function ResultView({
   avatarPoint: { lat: number; lng: number };
   onBack: () => void;
   onReplace: (stageId: string, placeId: string) => void;
-  onRequestChangeDesignated: (stageId: string) => void;
   /** 모든 단계 id를 새 순서대로 넘긴다(맨 위가 출발지가 된다). */
   onReorderStages: (orderedIds: string[]) => void;
   onRequestChangeTheme: (stageId: string) => void;
@@ -2129,10 +2124,10 @@ function ResultView({
         )}
 
         {stageResult.kind === "recommend" && stageResult.selected && (
-          <div className="flex items-center justify-between gap-2 rounded-xl border border-zinc-300 p-4 dark:border-zinc-700">
+          <div className="flex items-center gap-1 rounded-xl border border-zinc-300 py-4 pl-1.5 pr-4 dark:border-zinc-700">
+            {handle}
             <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-              <div className="flex items-center gap-1">
-                {handle}
+              <div className="flex items-center">
                 <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                   <span className="text-lg font-semibold text-black dark:text-white">
                     {stageResult.selected.name}
@@ -2179,19 +2174,25 @@ function ResultView({
         )}
 
         {stageResult.kind === "designated" && (
-          <div className="flex items-center justify-between gap-2 rounded-xl border border-zinc-300 p-4 dark:border-zinc-700">
+          <div className="flex items-center gap-1 rounded-xl border border-zinc-300 py-4 pl-1.5 pr-4 dark:border-zinc-700">
+            {handle}
             <div className="flex min-w-0 flex-1 flex-col gap-2">
-              <div className="flex flex-1 items-center gap-1">
-                {handle}
+              <div className="flex flex-1 items-center">
                 <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                   <span className="text-lg font-semibold text-black dark:text-white">
                     {stageResult.selected.name}
                   </span>
-                  {!stageResult.stage.isOrigin && (
-                    <span className="w-fit rounded-full border border-zinc-300 bg-zinc-100 px-2.5 py-0.5 text-xs font-medium text-zinc-700 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-200">
-                      지정
+                  <button
+                    type="button"
+                    onClick={() => onRequestChangeTheme(stageResult.stage.id)}
+                    aria-label="지정 장소 바꾸기"
+                    className="flex w-fit items-center gap-1 rounded-full border border-zinc-300 bg-zinc-100 px-2.5 py-0.5 text-xs font-medium text-zinc-700 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-200"
+                  >
+                    지정
+                    <span aria-hidden className="text-[10px]">
+                      ▾
                     </span>
-                  )}
+                  </button>
                 </div>
               </div>
               <span className="text-sm text-zinc-500 dark:text-zinc-500">
@@ -2207,13 +2208,6 @@ function ResultView({
               </a>
             </div>
             <div className="flex shrink-0 items-center gap-1.5">
-              <button
-                type="button"
-                onClick={() => onRequestChangeDesignated(stageResult.stage.id)}
-                className="h-9 shrink-0 rounded-lg border border-zinc-300 px-3 text-sm font-medium text-zinc-600 dark:border-zinc-700 dark:text-zinc-300"
-              >
-                변경
-              </button>
               <button
                 type="button"
                 onClick={() => onRemoveStage(stageResult.stage.id)}
@@ -2298,7 +2292,7 @@ function ResultView({
                 총 이동시간 약 {Math.round(result.totalTravelMinutes)}분
               </p>
               <p className="text-xs text-zinc-400 dark:text-zinc-500">
-                테마(▾)를 누르면 바꿀 수 있어요
+                칩(▾)을 누르면 바꿀 수 있어요
               </p>
             </div>
 
