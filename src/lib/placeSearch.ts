@@ -181,6 +181,9 @@ const SAMPLE_PLACES: PlaceSearchResult[] = places.map((p) => ({
   lng: p.lng,
 }));
 
+/** 임시 지도에 길잡이로 찍어 주는 대표 장소(지하철역 등). */
+export const MAP_LANDMARKS = LANDMARKS;
+
 const SEARCHABLE: PlaceSearchResult[] = [...LANDMARKS, ...SAMPLE_PLACES];
 
 const MAX_RESULTS = 8;

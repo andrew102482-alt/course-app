@@ -21,7 +21,7 @@ import {
   type StageOverrides,
   type StageResult,
 } from "@/lib/course";
-import { searchPlaces } from "@/lib/placeSearch";
+import { MAP_LANDMARKS, searchPlaces } from "@/lib/placeSearch";
 import { buildAiRequest, type AiPicks } from "@/lib/aiRecommend";
 import { saveCourse, toSavedCourse } from "@/lib/savedCourses";
 import { AvatarCustomizer, AvatarFigure } from "./AvatarCustomizer";
@@ -51,6 +51,10 @@ const DEFAULT_TRAVEL_MINUTES = 15;
 const MAX_STAGES = 8;
 const MAX_RECENT_DESIGNATED = 10;
 
+/** "현재 위치로 지정"으로 만든 지정 장소의 id. */
+const CURRENT_LOCATION_PLACE_ID = "current-location";
+/** "지도에서 지정"으로 만든 지정 장소의 id. */
+const MAP_PICK_PLACE_ID = "map-pick";
 const LAST_INPUT_STORAGE_KEY = "course-app:last-input";
 const RECENT_DESIGNATED_STORAGE_KEY = "course-app:recent-designated";
 const PERSONAL_CODE_STORAGE_KEY = "course-app:personal-code";
@@ -491,16 +495,21 @@ function CourseBuilder() {
         { id: generateId("stage"), kind: "designated" as const, place },
       ];
     });
-    setRecentDesignated((prev) => {
-      const deduped = prev.filter(
-        (p) =>
-          p.id !== place.id &&
-          !(p.name === place.name && p.address === place.address),
-      );
-      const next = [place, ...deduped].slice(0, MAX_RECENT_DESIGNATED);
-      saveRecentDesignated(next);
-      return next;
-    });
+    // 현재 위치·지도에서 고른 위치는 매번 달라지므로 "최근 지정 장소"에는 남기지 않는다.
+    if (
+      place.id !== CURRENT_LOCATION_PLACE_ID &&
+      place.id !== MAP_PICK_PLACE_ID
+    )
+      setRecentDesignated((prev) => {
+        const deduped = prev.filter(
+          (p) =>
+            p.id !== place.id &&
+            !(p.name === place.name && p.address === place.address),
+        );
+        const next = [place, ...deduped].slice(0, MAX_RECENT_DESIGNATED);
+        saveRecentDesignated(next);
+        return next;
+      });
     setOverrides({}); // 지정 장소가 바뀌면 주변 추천 단계를 다시 계산한다.
     setDesignatedEditTarget(null);
     setAddSheetOpen(false);
@@ -944,6 +953,8 @@ function CourseBuilder() {
               : null
           }
           recentPlaces={recentDesignated}
+          currentLocation={location}
+          locationStatus={locationStatus}
           onClose={() => setDesignatedEditTarget(null)}
           onSubmit={upsertDesignatedStage}
         />
@@ -1806,15 +1817,20 @@ function AddStageSheet({
 function DesignatedPlaceSheet({
   initial,
   recentPlaces,
+  currentLocation,
+  locationStatus,
   onClose,
   onSubmit,
 }: {
   initial: DesignatedPlace | null;
   recentPlaces: DesignatedPlace[];
+  currentLocation: { lat: number; lng: number } | null;
+  locationStatus: LocationStatus;
   onClose: () => void;
   onSubmit: (place: DesignatedPlace) => void;
 }) {
   const [query, setQuery] = useState("");
+  const [mapPickOpen, setMapPickOpen] = useState(false);
   const results = useMemo(() => searchPlaces(query), [query]);
   const hasQuery = query.trim().length > 0;
 
@@ -1827,6 +1843,20 @@ function DesignatedPlaceSheet({
       lng: place.lng,
     });
   }
+
+  const currentPlace: DesignatedPlace | null = currentLocation && {
+    id: CURRENT_LOCATION_PLACE_ID,
+    name: "현재 위치",
+    address: "내 현재 위치",
+    lat: currentLocation.lat,
+    lng: currentLocation.lng,
+  };
+  const currentOutside =
+    currentPlace !== null && !isWithinRegionRange(currentPlace);
+  const locationHint =
+    locationStatus === "loading" || locationStatus === "idle"
+      ? "현재 위치를 확인하는 중이에요."
+      : "위치 권한이 꺼져 있거나 위치를 알 수 없어요. 브라우저 설정에서 위치를 허용해 주세요.";
 
   return (
     <div className="fixed inset-0 z-20 flex items-end justify-center bg-black/50">
@@ -1854,6 +1884,34 @@ function DesignatedPlaceSheet({
             aria-label="장소 이름"
             className="h-12 w-full rounded-xl border border-zinc-300 bg-white px-4 text-base text-black dark:border-zinc-700 dark:bg-zinc-900 dark:text-white"
           />
+          <div className="flex gap-2">
+            <button
+              type="button"
+              disabled={!currentPlace}
+              onClick={() => currentPlace && pick(currentPlace)}
+              className="flex h-12 flex-1 items-center justify-center gap-1.5 rounded-xl border border-zinc-300 text-sm font-medium text-black disabled:opacity-50 dark:border-zinc-700 dark:text-white"
+            >
+              <span aria-hidden>📍</span>현재 위치로 지정
+            </button>
+            <button
+              type="button"
+              onClick={() => setMapPickOpen(true)}
+              className="flex h-12 flex-1 items-center justify-center gap-1.5 rounded-xl border border-zinc-300 text-sm font-medium text-black dark:border-zinc-700 dark:text-white"
+            >
+              <span aria-hidden>🗺️</span>지도에서 지정
+            </button>
+          </div>
+          {!currentPlace && (
+            <p className="text-xs text-zinc-500 dark:text-zinc-400">
+              {locationHint}
+            </p>
+          )}
+          {currentOutside && (
+            <p className="text-xs text-amber-600 dark:text-amber-400">
+              종로 일대 밖 · 코스에는 들어가지만 주변 추천은 종로 일대에서만
+              돼요
+            </p>
+          )}
           {initial && !hasQuery && (
             <p className="text-xs text-zinc-500 dark:text-zinc-400">
               지금 지정된 장소: {initial.name}
@@ -1931,6 +1989,155 @@ function DesignatedPlaceSheet({
         <p className="mt-auto text-xs text-zinc-400 dark:text-zinc-500">
           지금은 종로 일대 대표 장소와 예시 장소 안에서만 검색돼요. 네이버 키를
           연결하면 실제 장소 검색으로 바뀌어요.
+        </p>
+      </div>
+
+      {mapPickOpen && (
+        <MapPickSheet
+          onClose={() => setMapPickOpen(false)}
+          onConfirm={(point) =>
+            pick({
+              id: MAP_PICK_PLACE_ID,
+              name: "지도에서 고른 위치",
+              address: "지도에서 직접 고른 위치",
+              lat: point.lat,
+              lng: point.lng,
+            })
+          }
+        />
+      )}
+    </div>
+  );
+}
+
+/**
+ * 지도를 눌러 위치를 고르는 창. 네이버 지도를 연결하기 전이라 종로 일대를 그린 임시 지도다.
+ * 지도를 누르면 핀이 꽂히고, "이 위치로 지정"을 누르면 그 좌표가 지정 장소가 된다.
+ */
+const PICK_MAP_BOUNDS = {
+  minLat: REGION_CENTER.lat - 0.012,
+  maxLat: REGION_CENTER.lat + 0.012,
+  minLng: REGION_CENTER.lng - 0.015,
+  maxLng: REGION_CENTER.lng + 0.015,
+};
+
+function MapPickSheet({
+  onClose,
+  onConfirm,
+}: {
+  onClose: () => void;
+  onConfirm: (point: { lat: number; lng: number }) => void;
+}) {
+  const [picked, setPicked] = useState<{ lat: number; lng: number } | null>(
+    null,
+  );
+  const drawable = MAP_VIEW_SIZE - MAP_MARGIN * 2;
+  const b = PICK_MAP_BOUNDS;
+
+  function onTap(e: React.MouseEvent<SVGSVGElement>) {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = ((e.clientX - rect.left) / rect.width) * MAP_VIEW_SIZE;
+    const y = ((e.clientY - rect.top) / rect.height) * MAP_VIEW_SIZE;
+    const fx = Math.min(1, Math.max(0, (x - MAP_MARGIN) / drawable));
+    const fy = Math.min(1, Math.max(0, (y - MAP_MARGIN) / drawable));
+    setPicked({
+      lat: b.maxLat - fy * (b.maxLat - b.minLat),
+      lng: b.minLng + fx * (b.maxLng - b.minLng),
+    });
+  }
+
+  const pin = picked ? projectToMap({ ...picked, name: "" }, b) : null;
+
+  return (
+    <div
+      className="fixed inset-0 z-30 flex items-end justify-center bg-black/50"
+      onClick={onClose}
+    >
+      <div
+        role="dialog"
+        aria-label="지도에서 지정"
+        onClick={(e) => e.stopPropagation()}
+        className="flex w-full max-w-md flex-col gap-3 rounded-t-2xl bg-white p-4 dark:bg-zinc-900"
+      >
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-bold text-black dark:text-white">
+            지도에서 지정
+          </h2>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="닫기"
+            className="flex h-9 w-9 items-center justify-center rounded-lg border border-zinc-300 dark:border-zinc-700 dark:text-white"
+          >
+            ✕
+          </button>
+        </div>
+        <p className="text-sm text-zinc-600 dark:text-zinc-400">
+          지도를 눌러 위치를 골라 주세요.
+        </p>
+        <svg
+          viewBox={`0 0 ${MAP_VIEW_SIZE} ${MAP_VIEW_SIZE}`}
+          onClick={onTap}
+          aria-label="종로 일대 임시 지도"
+          className="aspect-square w-full cursor-crosshair rounded-xl bg-zinc-100 text-zinc-400 dark:bg-zinc-800"
+        >
+          {[0, 1, 2, 3, 4].map((i) => (
+            <g key={i} stroke="currentColor" strokeOpacity={0.3}>
+              <line
+                x1={MAP_MARGIN + (drawable / 4) * i}
+                y1={MAP_MARGIN}
+                x2={MAP_MARGIN + (drawable / 4) * i}
+                y2={MAP_VIEW_SIZE - MAP_MARGIN}
+              />
+              <line
+                x1={MAP_MARGIN}
+                y1={MAP_MARGIN + (drawable / 4) * i}
+                x2={MAP_VIEW_SIZE - MAP_MARGIN}
+                y2={MAP_MARGIN + (drawable / 4) * i}
+              />
+            </g>
+          ))}
+          {MAP_LANDMARKS.map((lm) => {
+            const pt = projectToMap(lm, b);
+            if (
+              pt.x < 0 ||
+              pt.x > MAP_VIEW_SIZE ||
+              pt.y < 0 ||
+              pt.y > MAP_VIEW_SIZE
+            )
+              return null;
+            return (
+              <g key={lm.id} pointerEvents="none">
+                <circle cx={pt.x} cy={pt.y} r={4} fill="currentColor" />
+                <text
+                  x={pt.x + 7}
+                  y={pt.y + 4}
+                  fontSize={12}
+                  fill="currentColor"
+                >
+                  {lm.name}
+                </text>
+              </g>
+            );
+          })}
+          {pin && (
+            <g pointerEvents="none">
+              <circle cx={pin.x} cy={pin.y} r={9} fill="#ef4444" />
+              <circle cx={pin.x} cy={pin.y} r={3.5} fill="white" />
+            </g>
+          )}
+        </svg>
+        <button
+          type="button"
+          disabled={!picked}
+          onClick={() => picked && onConfirm(picked)}
+          className="h-12 w-full rounded-xl bg-black text-base font-semibold text-white disabled:opacity-40 dark:bg-white dark:text-black"
+        >
+          이 위치로 지정
+        </button>
+        <p className="text-xs text-zinc-400 dark:text-zinc-500">
+          지금은 종로 일대를 그린 임시 지도예요. 네이버 지도를 연결하면 실제
+          지도로 바뀌어요.
         </p>
       </div>
     </div>
