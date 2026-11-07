@@ -309,8 +309,8 @@ function CourseBuilder() {
   const [makingCourse, setMakingCourse] = useState(false);
   // 결과 화면에서 "상관없음" 칸을 AI가 채우는 동안 true.
   const [fillingSlots, setFillingSlots] = useState(false);
-  // AI가 채워 준 출발지 단계의 id. 결과에서 돌아갈 때 이 출발지만 "상관없음"으로 되돌린다.
-  const [aiFilledOriginId, setAiFilledOriginId] = useState<string | null>(null);
+  // "코스 만들기"를 누른 순간의 입력(일정 단계). 결과 화면에서 돌아가면 이 상태로 되돌린다.
+  const inputSnapshotRef = useRef<Stage[] | null>(null);
   const [aiMessage, setAiMessage] = useState<string | null>(null);
   const [addSheetOpen, setAddSheetOpen] = useState(false);
   // 일정 칸의 "변경"을 누르면 단계 추가와 같은 창이 뜨고, 고른 것으로 그 칸이 바뀐다. 바꿀 칸의 id.
@@ -507,7 +507,6 @@ function CourseBuilder() {
       saveRecentDesignated(next);
       return next;
     });
-    if (designatedEditTarget === aiFilledOriginId) setAiFilledOriginId(null);
     setOverrides({}); // 지정 장소가 바뀌면 주변 추천 단계를 다시 계산한다.
     setDesignatedEditTarget(null);
     setAddSheetOpen(false);
@@ -517,32 +516,27 @@ function CourseBuilder() {
     setStages((prev) => prev.filter((s) => s.id !== id || s.isOrigin));
   }
 
-  /** 결과 화면에서 입력 화면으로 돌아간다. AI가 채웠던 출발지는 "상관없음"으로 되돌린다(직접 고른 출발지는 유지). */
+  /**
+   * 결과 화면에서 입력 화면으로 돌아간다. 결과 화면에서 바꾼 것(순서·출발지·삭제·추가)과
+   * AI가 채운 칸은 모두 버리고, "코스 만들기"를 누르던 때의 입력 상태로 되돌린다.
+   */
   function leaveResult() {
     setShowResult(false);
-    const originId = aiFilledOriginId;
-    if (!originId) return;
-    setAiFilledOriginId(null);
-    setStages((prev) =>
-      prev.map((s) =>
-        s.isOrigin && s.id === originId && s.kind === "recommend"
-          ? {
-              id: s.id,
-              kind: "designated" as const,
-              isOrigin: true,
-              place: unsetPlace(),
-            }
-          : s,
-      ),
-    );
+    const snapshot = inputSnapshotRef.current;
+    if (!snapshot) return;
+    inputSnapshotRef.current = null;
+    setStages(snapshot);
+    setOverrides({});
   }
 
-  /** 결과 화면에서 단계를 지운다. 남은 단계가 없으면 입력 화면으로 돌아간다. */
+  /** 결과 화면에서 단계를 지운다(출발지도 가능, 지우면 다음 단계가 출발지가 됨). 남은 단계가 없으면 입력 화면으로 돌아간다. */
   function removeStageFromResult(id: string) {
-    const remaining = stages.filter(
-      (s) => s.id !== id && !s.isOrigin && !isUnsetStage(s),
+    const remaining = stages.filter((s) => s.id !== id && !isUnsetStage(s));
+    setStages((prev) =>
+      prev
+        .filter((s) => s.id !== id)
+        .map((s, i) => ({ ...s, isOrigin: i === 0 })),
     );
-    removeStage(id);
     if (remaining.length === 0) leaveResult();
   }
 
@@ -591,8 +585,6 @@ function CourseBuilder() {
       });
       const filled = data.stages ?? [];
       if (filled.length !== slotCount) return null;
-      const originSlot = list.find((s) => s.isOrigin && isSlot(s));
-      if (originSlot) setAiFilledOriginId(originSlot.id);
       let i = 0;
       return list.map((s) => {
         if (!isSlot(s)) return s;
@@ -673,6 +665,7 @@ function CourseBuilder() {
    *   실패하면 기본 추천(평점·거리 점수)으로 보여준다.
    */
   async function makeCourse() {
+    inputSnapshotRef.current = stages;
     setOverrides({});
     const aiInput = {
       themeNote,
@@ -777,17 +770,14 @@ function CourseBuilder() {
     }
   }
 
-  /** 결과 화면에서 끌어 바꾼 순서를 일정 단계에 반영한다(출발지는 맨 앞 고정, 나머지는 뒤에 그대로). */
+  /** 결과 화면에서 끌어 바꾼 순서를 일정 단계에 반영한다. 맨 위에 온 단계가 출발지가 된다. */
   function reorderStagesById(orderedIds: string[]) {
     setStages((prev) => {
-      const origin = prev.filter((s) => s.isOrigin);
       const moved = orderedIds
         .map((id) => prev.find((s) => s.id === id))
         .filter((s): s is Stage => s !== undefined);
-      const rest = prev.filter(
-        (s) => !s.isOrigin && !orderedIds.includes(s.id),
-      );
-      return [...origin, ...moved, ...rest];
+      const rest = prev.filter((s) => !orderedIds.includes(s.id));
+      return [...moved, ...rest].map((s, i) => ({ ...s, isOrigin: i === 0 }));
     });
   }
 
@@ -912,9 +902,6 @@ function CourseBuilder() {
           canAddMore
           onClose={() => setChangeStageTarget(null)}
           onAddRecommend={(category, subCategory) => {
-            if (changeStageTarget === aiFilledOriginId) {
-              setAiFilledOriginId(null);
-            }
             setStages((prev) =>
               prev.map((s) =>
                 s.id === changeStageTarget
@@ -1148,13 +1135,21 @@ function InputView({
       </section>
 
       <section className="flex flex-col gap-3">
-        <div className="flex flex-wrap items-baseline gap-x-2">
+        <div className="flex flex-wrap items-center gap-x-1.5 gap-y-2">
           <span className="text-sm font-medium text-zinc-600 dark:text-zinc-400">
             일정 단계
           </span>
-          <span className="text-xs text-zinc-400 dark:text-zinc-500">
-            가고 싶은 장소나 테마를 직접 추가해요!
-          </span>
+          <HelpTip label="일정 단계 설명">
+            <ul className="flex list-none flex-col gap-1.5">
+              <li>• 가고 싶은 장소나 테마를 직접 추가할 수 있어요.</li>
+              <li>
+                • 출발지 칸만 있고 다른 단계가 없으면, 나머지 일정은 AI가 통째로
+                추천해요.
+              </li>
+              <li>• 왼쪽 ⠿ 버튼을 잡고 끌면 순서를 바꿀 수 있어요.</li>
+              <li>• &lsquo;상관없음&rsquo;으로 두면 그 칸은 AI가 채워줘요.</li>
+            </ul>
+          </HelpTip>
         </div>
 
         {origin && (
@@ -1238,6 +1233,35 @@ function InputView({
         </button>
       </div>
     </div>
+  );
+}
+
+/** 제목 옆 ? 버튼. 누르면 설명이 펼쳐지고, 다시 누르면 접힌다. */
+function HelpTip({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button
+        type="button"
+        aria-label={label}
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+        className="flex h-6 w-6 items-center justify-center rounded-full border border-zinc-300 text-xs font-semibold text-zinc-500 dark:border-zinc-700 dark:text-zinc-400"
+      >
+        ?
+      </button>
+      {open && (
+        <div className="basis-full rounded-lg bg-zinc-100 px-3 py-3 text-xs leading-relaxed text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+          {children}
+        </div>
+      )}
+    </>
   );
 }
 
@@ -1970,7 +1994,7 @@ function ResultView({
   onBack: () => void;
   onReplace: (stageId: string, placeId: string) => void;
   onRequestChangeDesignated: (stageId: string) => void;
-  /** 출발지를 뺀 단계 id를 새 순서대로 넘긴다. */
+  /** 모든 단계 id를 새 순서대로 넘긴다(맨 위가 출발지가 된다). */
   onReorderStages: (orderedIds: string[]) => void;
   onRequestChangeTheme: (stageId: string) => void;
   onRemoveStage: (stageId: string) => void;
@@ -2021,9 +2045,7 @@ function ResultView({
       ? result.stages[failedIndex + 1]
       : null;
 
-  const movableIds = result.stages
-    .filter((r) => !r.stage.isOrigin)
-    .map((r) => r.stage.id);
+  const movableIds = result.stages.map((r) => r.stage.id);
 
   function renderStage(
     stageResult: CourseResult["stages"][number],
@@ -2085,16 +2107,14 @@ function ResultView({
               >
                 교체
               </button>
-              {!stageResult.stage.isOrigin && (
-                <button
-                  type="button"
-                  onClick={() => onRemoveStage(stageResult.stage.id)}
-                  aria-label="이 단계 삭제"
-                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-zinc-300 text-zinc-500 dark:border-zinc-700 dark:text-zinc-400"
-                >
-                  ✕
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={() => onRemoveStage(stageResult.stage.id)}
+                aria-label="이 단계 삭제"
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-zinc-300 text-zinc-500 dark:border-zinc-700 dark:text-zinc-400"
+              >
+                ✕
+              </button>
             </div>
           </div>
         )}
@@ -2105,9 +2125,11 @@ function ResultView({
               <div className="flex flex-1 items-center gap-1">
                 {handle}
                 <div className="flex flex-col gap-1">
-                  <span className="w-fit rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
-                    지정 · {positionLabel(index, result.stages.length)}
-                  </span>
+                  {!stageResult.stage.isOrigin && (
+                    <span className="w-fit rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+                      지정 · {positionLabel(index, result.stages.length)}
+                    </span>
+                  )}
                   <span className="text-lg font-semibold text-black dark:text-white">
                     {stageResult.selected.name}
                   </span>
@@ -2124,9 +2146,6 @@ function ResultView({
               >
                 네이버맵에서 보기
               </a>
-              <span className="text-sm text-zinc-500 dark:text-zinc-500">
-                🕒 운영 시간 정보 없음
-              </span>
             </div>
             <div className="flex shrink-0 items-center gap-1.5">
               <button
@@ -2136,16 +2155,14 @@ function ResultView({
               >
                 변경
               </button>
-              {!stageResult.stage.isOrigin && (
-                <button
-                  type="button"
-                  onClick={() => onRemoveStage(stageResult.stage.id)}
-                  aria-label="이 단계 삭제"
-                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-zinc-300 text-zinc-500 dark:border-zinc-700 dark:text-zinc-400"
-                >
-                  ✕
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={() => onRemoveStage(stageResult.stage.id)}
+                aria-label="이 단계 삭제"
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-zinc-300 text-zinc-500 dark:border-zinc-700 dark:text-zinc-400"
+              >
+                ✕
+              </button>
             </div>
           </div>
         )}
@@ -2226,23 +2243,11 @@ function ResultView({
               </p>
             </div>
 
-            <ul className="flex flex-col gap-3">
-              {result.stages.map((stageResult, index) =>
-                stageResult.stage.isOrigin ? (
-                  <li
-                    key={stageResult.stage.id}
-                    className="flex flex-col gap-3"
-                  >
-                    {renderStage(stageResult, index, null)}
-                  </li>
-                ) : null,
-              )}
-            </ul>
             <Reorder.Group
               axis="y"
               values={movableIds}
               onReorder={onReorderStages}
-              className="mt-3 flex flex-col gap-3"
+              className="flex flex-col gap-3"
             >
               {movableIds.map((id) => {
                 const index = result.stages.findIndex((r) => r.stage.id === id);
