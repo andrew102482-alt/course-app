@@ -2123,7 +2123,7 @@ function AddStageSheet({
                   onKeyDown={(e) => {
                     if (e.key === "Enter") void addTyped();
                   }}
-                  placeholder="예: 북카페, 아늑한 음식점, 야경 술집"
+                  placeholder="예: 북카페, 음식점, 야경 술집"
                   className="h-12 min-w-0 flex-1 rounded-xl border border-zinc-300 bg-white px-3 text-base text-black dark:border-zinc-700 dark:bg-zinc-800 dark:text-white"
                 />
                 <button
