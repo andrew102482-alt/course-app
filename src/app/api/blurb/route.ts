@@ -15,7 +15,8 @@ const BASE_URL = process.env.BAZE_BASE_URL ?? "https://api.baze.co/v1/gateway";
 const MODEL = process.env.BAZE_MODEL ?? "claude-haiku-5-5";
 // 블로그 검색 키는 두 종류 중 있는 것을 쓴다.
 // ① NAVER API HUB(NCP): NAVER_HUB_KEY_ID / NAVER_HUB_KEY
-// ② 네이버 개발자센터 앱(로그인과 같은 키): NAVER_CLIENT_ID / NAVER_CLIENT_SECRET (앱에 "검색" API 추가 필요)
+// ② 블로그 검색 전용 개발자센터 앱: NAVER_SEARCH_CLIENT_ID / NAVER_SEARCH_CLIENT_SECRET (로그인 앱과 달라도 됨)
+// ③ 없으면 로그인 앱 키(NAVER_CLIENT_ID / NAVER_CLIENT_SECRET)를 대신 쓴다 (앱에 "검색" API 추가 필요)
 const HUB_URL = "https://naverapihub.apigw.ntruss.com/search/v1/blog";
 const OPEN_URL = "https://openapi.naver.com/v1/search/blog.json";
 
@@ -153,19 +154,15 @@ async function askLlm(apiKey: string, user: string): Promise<string> {
 
 export async function POST(request: Request) {
   const llmKey = process.env.BAZE_API_KEY;
+  const env = process.env;
+  const searchId = env.NAVER_SEARCH_CLIENT_ID || env.NAVER_CLIENT_ID;
+  const searchSecret =
+    env.NAVER_SEARCH_CLIENT_SECRET || env.NAVER_CLIENT_SECRET;
   const auth: BlogAuth | null =
-    process.env.NAVER_HUB_KEY_ID && process.env.NAVER_HUB_KEY
-      ? {
-          hub: true,
-          keyId: process.env.NAVER_HUB_KEY_ID,
-          key: process.env.NAVER_HUB_KEY,
-        }
-      : process.env.NAVER_CLIENT_ID && process.env.NAVER_CLIENT_SECRET
-        ? {
-            hub: false,
-            keyId: process.env.NAVER_CLIENT_ID,
-            key: process.env.NAVER_CLIENT_SECRET,
-          }
+    env.NAVER_HUB_KEY_ID && env.NAVER_HUB_KEY
+      ? { hub: true, keyId: env.NAVER_HUB_KEY_ID, key: env.NAVER_HUB_KEY }
+      : searchId && searchSecret
+        ? { hub: false, keyId: searchId, key: searchSecret }
         : null;
   if (!llmKey || !auth) {
     return NextResponse.json({ error: "not-configured" }, { status: 503 });
