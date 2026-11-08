@@ -88,7 +88,7 @@ const DEFAULT_TRAVEL_MINUTES = 15;
 /** 최대 이동시간을 "상관 없음"으로 고른 상태를 나타내는 값(저장도 이 값으로 한다). */
 const UNLIMITED_TRAVEL = 0;
 /** "상관 없음"일 때 계산에 쓰는 이동시간 한도(사실상 제한 없음). */
-const UNLIMITED_TRAVEL_LIMIT_MINUTES = 120;
+const UNLIMITED_TRAVEL_LIMIT_MINUTES = 45;
 const MAX_STAGES = 8;
 const MAX_RECENT_DESIGNATED = 10;
 
