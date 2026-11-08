@@ -11,11 +11,7 @@ import {
   useSyncExternalStore,
 } from "react";
 import { Reorder, useDragControls } from "framer-motion";
-import {
-  places,
-  type Place,
-  type PlaceCategory,
-} from "@/data/places";
+import { places, type Place, type PlaceCategory } from "@/data/places";
 import {
   REGION_CENTER,
   buildCourse,
@@ -84,15 +80,6 @@ import {
   saveNickname,
   type Avatar,
 } from "./avatar";
-
-const CATEGORIES: PlaceCategory[] = [
-  "문화 생활",
-  "액티비티",
-  "맛집",
-  "카페",
-  "술집",
-  "쇼핑",
-];
 
 const MIN_TRAVEL_MINUTES = 5;
 const TRAVEL_MINUTES_STEP = 5;
@@ -2104,18 +2091,6 @@ function AddStageSheet({
             >
               상관없음
             </button>
-            <div className="grid grid-cols-2 gap-2">
-              {CATEGORIES.map((c) => (
-                <button
-                  key={c}
-                  type="button"
-                  onClick={() => onAddRecommend(c, undefined)}
-                  className="flex h-14 items-center justify-center rounded-xl border border-zinc-300 text-base font-medium text-black dark:border-zinc-700 dark:text-white"
-                >
-                  {c}
-                </button>
-              ))}
-            </div>
             <div className="flex flex-col gap-2 border-t border-zinc-200 pt-3 dark:border-zinc-700">
               <label
                 htmlFor="stage-type-note"
