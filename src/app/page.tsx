@@ -3530,6 +3530,36 @@ function ReplaceSheet({
     (c) => c.place.id === previewId,
   );
 
+  // 실제 장소(TMAP) 후보는 블로그+AI 한 줄 소개를 위쪽 12곳까지 가져와 설명 줄에 채운다.
+  useSyncExternalStore(subscribeBlurbs, blurbVersion, blurbVersion);
+  const candidateKey = stageResult.candidates
+    .slice(0, 12)
+    .map((c) => c.place.id)
+    .join(",");
+  useEffect(() => {
+    const live = stageResult.candidates
+      .slice(0, 12)
+      .map((c) => c.place)
+      .filter((p) => p.source === "tmap");
+    const byArea = new Map<string, { n: string; c: string }[]>();
+    for (const p of live) {
+      const area = blurbAreaOf(p.region);
+      byArea.set(area, [
+        ...(byArea.get(area) ?? []),
+        {
+          n: p.name,
+          c: p.subCategory ? `${p.category} › ${p.subCategory}` : p.category,
+        },
+      ]);
+    }
+    byArea.forEach((list, area) => {
+      for (let i = 0; i < list.length; i += 6) {
+        void requestBlurbs(area, list.slice(i, i + 6));
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [candidateKey]);
+
   return (
     <div className="fixed inset-0 z-20 flex flex-col bg-white dark:bg-black">
       <div className="flex shrink-0 items-center justify-between p-4">
@@ -3574,9 +3604,13 @@ function ReplaceSheet({
             {stageResult.candidates.map((candidate) => {
               const isApplied = candidate.place.id === stageResult.selected?.id;
               const isPreviewed = candidate.place.id === previewId;
-              const nextMinutes = nextSelected
-                ? walkingMinutesBetween(candidate.place, nextSelected)
-                : null;
+              const description =
+                (candidate.place.source === "tmap"
+                  ? getBlurb(
+                      candidate.place.name,
+                      blurbAreaOf(candidate.place.region),
+                    )
+                  : "") || candidate.place.description;
 
               return (
                 <li key={candidate.place.id}>
@@ -3600,15 +3634,11 @@ function ReplaceSheet({
                           : `★ ${candidate.place.rating.toFixed(1)}`}
                       </span>
                     </div>
-                    <span className="text-sm text-zinc-500 dark:text-zinc-400">
-                      {candidate.travelMinutesFromPrevious !== null &&
-                        `이전 장소까지 도보 약 ${Math.round(candidate.travelMinutesFromPrevious)}분`}
-                      {candidate.travelMinutesFromPrevious !== null &&
-                        nextMinutes !== null &&
-                        " · "}
-                      {nextMinutes !== null &&
-                        `다음 장소까지 도보 약 ${Math.round(nextMinutes)}분`}
-                    </span>
+                    {description && (
+                      <span className="text-sm text-zinc-500 dark:text-zinc-400">
+                        {description}
+                      </span>
+                    )}
                     {!candidate.withinMaxTravel && (
                       <span className="w-fit rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-600 dark:bg-red-950 dark:text-red-400">
                         이동시간 초과
