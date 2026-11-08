@@ -49,6 +49,7 @@ import {
   AREAS,
   DEFAULT_REGION,
   DEFAULT_SELECTION,
+  DONGS,
   dongsOf,
   regionLabel,
   resolveSelection,
@@ -2106,7 +2107,10 @@ function RegionSheet({
   const [dongId, setDongId] = useState<string | null>(selected.dongId);
   const [query, setQuery] = useState("");
   const q = query.trim();
-  const dongs = dongsOf(areaId).filter((d) => !q || d.name.includes(q));
+  // 검색어가 있으면 전국에서 찾고, 없으면 고른 시·도의 동네만 보여준다.
+  const dongs = q
+    ? DONGS.filter((d) => d.name.includes(q) || d.area.includes(q))
+    : dongsOf(areaId);
   const pickedLabel = regionLabel(selectionRegions({ areaId, dongId })[0]);
 
   return (
@@ -2133,6 +2137,14 @@ function RegionSheet({
           코스를 시작할 지역이에요. 첫 장소는 이 주변에서 찾고, 그다음부터는 앞
           장소 주변에서 이어 찾아서 코스가 이 지역 밖으로 이어질 수 있어요.
         </p>
+        <input
+          type="search"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="동네 이름 검색 (전국, 예: 해운대)"
+          aria-label="동네 이름 검색"
+          className="h-11 w-full rounded-xl border border-zinc-300 bg-white px-3 text-base text-black dark:border-zinc-700 dark:bg-zinc-800 dark:text-white"
+        />
         <div className="flex flex-wrap gap-1.5" aria-label="시·도">
           {AREAS.map((a) => {
             const on = a.id === areaId;
@@ -2171,14 +2183,6 @@ function RegionSheet({
             </button>
           )}
         </div>
-        <input
-          type="search"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="동네 이름 검색"
-          aria-label="동네 이름 검색"
-          className="h-11 w-full rounded-xl border border-zinc-300 bg-white px-3 text-base text-black dark:border-zinc-700 dark:bg-zinc-800 dark:text-white"
-        />
         <div className="flex min-h-0 flex-1 flex-wrap content-start gap-1.5 overflow-y-auto">
           {dongs.length === 0 && (
             <p className="text-sm text-zinc-500 dark:text-zinc-400">
@@ -2191,7 +2195,10 @@ function RegionSheet({
               <button
                 key={d.id}
                 type="button"
-                onClick={() => setDongId(on ? null : d.id)}
+                onClick={() => {
+                  setAreaId(d.areaId);
+                  setDongId(on ? null : d.id);
+                }}
                 aria-pressed={on}
                 className={`h-10 rounded-full border px-4 text-sm font-medium ${
                   on
@@ -2199,7 +2206,7 @@ function RegionSheet({
                     : "border-zinc-300 text-zinc-700 dark:border-zinc-700 dark:text-zinc-200"
                 }`}
               >
-                {d.name}
+                {q ? `${d.area} · ${d.name}` : d.name}
               </button>
             );
           })}
