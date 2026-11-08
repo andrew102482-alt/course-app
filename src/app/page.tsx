@@ -50,7 +50,6 @@ import {
   DEFAULT_REGION,
   DEFAULT_SELECTION,
   DONGS,
-  dongsOf,
   regionLabel,
   resolveSelection,
   selectionRegions,
@@ -2107,10 +2106,10 @@ function RegionSheet({
   const [dongId, setDongId] = useState<string | null>(selected.dongId);
   const [query, setQuery] = useState("");
   const q = query.trim();
-  // 검색어가 있으면 전국에서 찾고, 없으면 고른 시·도의 동네만 보여준다.
+  // 동네는 검색한 것만 보여준다(처음부터 목록을 펼쳐 두지 않는다).
   const dongs = q
     ? DONGS.filter((d) => d.name.includes(q) || d.area.includes(q))
-    : dongsOf(areaId);
+    : [];
   const pickedLabel = regionLabel(selectionRegions({ areaId, dongId })[0]);
 
   return (
@@ -2181,7 +2180,7 @@ function RegionSheet({
           <span className="text-sm font-medium text-zinc-600 dark:text-zinc-400">
             {q
               ? "검색 결과 (누르면 바로 적용돼요)"
-              : "동네 (고르지 않아도 돼요)"}
+              : "동네는 위 검색창에서 찾아 고를 수 있어요 (안 골라도 돼요)"}
           </span>
           {dongId && (
             <button
@@ -2193,8 +2192,8 @@ function RegionSheet({
             </button>
           )}
         </div>
-        <div className="flex min-h-[8rem] flex-1 flex-wrap content-start gap-1.5 overflow-y-auto">
-          {dongs.length === 0 && (
+        <div className="flex min-h-0 flex-1 flex-wrap content-start gap-1.5 overflow-y-auto">
+          {q && dongs.length === 0 && (
             <p className="text-sm text-zinc-500 dark:text-zinc-400">
               맞는 동네가 없어요.
             </p>
