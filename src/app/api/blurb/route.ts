@@ -13,7 +13,11 @@ import {
 // 키는 서버에서만 읽는다. 블로그 원문은 LLM의 근거 자료로만 쓰고 화면에는 보내지 않는다.
 const BASE_URL = process.env.BAZE_BASE_URL ?? "https://api.baze.co/v1/gateway";
 const MODEL = process.env.BAZE_MODEL ?? "claude-haiku-5-5";
-const BLOG_URL = "https://naverapihub.apigw.ntruss.com/search/v1/blog";
+// 블로그 검색 키는 두 종류 중 있는 것을 쓴다.
+// ① NAVER API HUB(NCP): NAVER_HUB_KEY_ID / NAVER_HUB_KEY
+// ② 네이버 개발자센터 앱(로그인과 같은 키): NAVER_CLIENT_ID / NAVER_CLIENT_SECRET (앱에 "검색" API 추가 필요)
+const HUB_URL = "https://naverapihub.apigw.ntruss.com/search/v1/blog";
+const OPEN_URL = "https://openapi.naver.com/v1/search/blog.json";
 
 export const maxDuration = 60;
 
@@ -54,18 +58,21 @@ function parseRequest(
   return { area: cleanText(b.area, 30), places };
 }
 
-async function blogSnippets(
-  keyId: string,
-  key: string,
-  query: string,
-): Promise<string[]> {
+type BlogAuth = { hub: boolean; keyId: string; key: string };
+
+async function blogSnippets(auth: BlogAuth, query: string): Promise<string[]> {
   try {
-    const url = `${BLOG_URL}?query=${encodeURIComponent(query)}&display=3`;
+    const url = `${auth.hub ? HUB_URL : OPEN_URL}?query=${encodeURIComponent(query)}&display=3`;
     const res = await fetch(url, {
-      headers: {
-        "X-NCP-APIGW-API-KEY-ID": keyId,
-        "X-NCP-APIGW-API-KEY": key,
-      },
+      headers: auth.hub
+        ? {
+            "X-NCP-APIGW-API-KEY-ID": auth.keyId,
+            "X-NCP-APIGW-API-KEY": auth.key,
+          }
+        : {
+            "X-Naver-Client-Id": auth.keyId,
+            "X-Naver-Client-Secret": auth.key,
+          },
       signal: AbortSignal.timeout(10_000),
     });
     if (!res.ok) return [];
@@ -113,9 +120,21 @@ async function askLlm(apiKey: string, user: string): Promise<string> {
 
 export async function POST(request: Request) {
   const llmKey = process.env.BAZE_API_KEY;
-  const blogKeyId = process.env.NAVER_HUB_KEY_ID;
-  const blogKey = process.env.NAVER_HUB_KEY;
-  if (!llmKey || !blogKeyId || !blogKey) {
+  const auth: BlogAuth | null =
+    process.env.NAVER_HUB_KEY_ID && process.env.NAVER_HUB_KEY
+      ? {
+          hub: true,
+          keyId: process.env.NAVER_HUB_KEY_ID,
+          key: process.env.NAVER_HUB_KEY,
+        }
+      : process.env.NAVER_CLIENT_ID && process.env.NAVER_CLIENT_SECRET
+        ? {
+            hub: false,
+            keyId: process.env.NAVER_CLIENT_ID,
+            key: process.env.NAVER_CLIENT_SECRET,
+          }
+        : null;
+  if (!llmKey || !auth) {
     return NextResponse.json({ error: "not-configured" }, { status: 503 });
   }
   const ip =
@@ -139,9 +158,7 @@ export async function POST(request: Request) {
     .filter((i) => i >= 0);
 
   const found = await Promise.all(
-    need.map((i) =>
-      blogSnippets(blogKeyId, blogKey, `${places[i].n} ${area}`.trim()),
-    ),
+    need.map((i) => blogSnippets(auth, `${places[i].n} ${area}`.trim())),
   );
   const snippets: Record<number, string[]> = {};
   need.forEach((i, j) => (snippets[i] = found[j]));
