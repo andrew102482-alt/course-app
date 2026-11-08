@@ -2161,8 +2161,10 @@ function RegionSheet({
 }) {
   const [areaId, setAreaId] = useState(selected.areaId);
   const [dongId, setDongId] = useState<string | null>(selected.dongId);
+  // query는 입력 중인 글, submitted는 검색을 누른 글. 결과는 검색을 눌렀을 때만 나온다.
   const [query, setQuery] = useState("");
-  const q = query.trim();
+  const [submitted, setSubmitted] = useState("");
+  const q = submitted.trim();
   // 동네는 검색한 것만 보여준다(처음부터 목록을 펼쳐 두지 않는다).
   const dongs = q
     ? DONGS.filter((d) => d.name.includes(q) || d.area.includes(q))
@@ -2175,22 +2177,17 @@ function RegionSheet({
   useEffect(() => {
     if (q.length < 2) return;
     const controller = new AbortController();
-    const timer = window.setTimeout(() => {
-      fetch(`/api/regions/search?q=${encodeURIComponent(q)}`, {
-        signal: controller.signal,
-      })
-        .then((r) => (r.ok ? r.json() : { results: [] }))
-        .then((d: { results?: NonNullable<typeof remote>["items"] }) =>
-          setRemote({ q, items: d.results ?? [] }),
-        )
-        .catch(() => {
-          if (!controller.signal.aborted) setRemote({ q, items: [] });
-        });
-    }, 300);
-    return () => {
-      window.clearTimeout(timer);
-      controller.abort();
-    };
+    fetch(`/api/regions/search?q=${encodeURIComponent(q)}`, {
+      signal: controller.signal,
+    })
+      .then((r) => (r.ok ? r.json() : { results: [] }))
+      .then((d: { results?: NonNullable<typeof remote>["items"] }) =>
+        setRemote({ q, items: d.results ?? [] }),
+      )
+      .catch(() => {
+        if (!controller.signal.aborted) setRemote({ q, items: [] });
+      });
+    return () => controller.abort();
   }, [q]);
   const searching = q.length >= 2 && remote?.q !== q;
   const results: { key: string; label: string; selection: RegionSelection }[] =
@@ -2238,20 +2235,32 @@ function RegionSheet({
           코스를 시작할 지역이에요. 첫 장소는 이 주변에서 찾고, 그다음부터는 앞
           장소 주변에서 이어 찾아서 코스가 이 지역 밖으로 이어질 수 있어요.
         </p>
-        <input
-          type="search"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          onKeyDown={(e) => {
-            // 엔터를 누르면 첫 번째 검색 결과로 바로 적용한다.
-            if (e.key === "Enter" && q && results.length > 0) {
-              onApply(results[0].selection);
-            }
-          }}
-          placeholder="동네 이름 검색 (전국, 예: 해운대)"
-          aria-label="동네 이름 검색"
-          className="h-11 w-full rounded-xl border border-zinc-300 bg-white px-3 text-base text-black dark:border-zinc-700 dark:bg-zinc-800 dark:text-white"
-        />
+        <div className="flex gap-2">
+          <input
+            type="search"
+            value={query}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              // 입력을 모두 지우면 검색 결과도 닫고 시·도 버튼으로 돌아간다.
+              if (!e.target.value.trim()) setSubmitted("");
+            }}
+            onKeyDown={(e) => {
+              // 엔터도 검색 버튼과 같다. 결과는 검색을 눌렀을 때만 나온다.
+              if (e.key === "Enter") setSubmitted(query);
+            }}
+            placeholder="동네 이름 검색 (전국, 예: 해운대)"
+            aria-label="동네 이름 검색"
+            className="h-11 min-w-0 flex-1 rounded-xl border border-zinc-300 bg-white px-3 text-base text-black dark:border-zinc-700 dark:bg-zinc-800 dark:text-white"
+          />
+          <button
+            type="button"
+            onClick={() => setSubmitted(query)}
+            disabled={!query.trim()}
+            className="h-11 shrink-0 rounded-xl bg-black px-4 text-base font-semibold text-white disabled:opacity-40 dark:bg-white dark:text-black"
+          >
+            검색
+          </button>
+        </div>
         {!q && (
           <div className="flex flex-wrap gap-1.5" aria-label="시·도">
             {AREAS.map((a) => {
@@ -2282,7 +2291,7 @@ function RegionSheet({
           <span className="text-sm font-medium text-zinc-600 dark:text-zinc-400">
             {q
               ? "검색 결과 (누르면 바로 적용돼요)"
-              : "동네는 위 검색창에서 찾아 고를 수 있어요 (안 골라도 돼요)"}
+              : "동네는 위 검색창에 이름을 치고 검색을 눌러 고를 수 있어요 (안 골라도 돼요)"}
           </span>
           {dongId && (
             <button
