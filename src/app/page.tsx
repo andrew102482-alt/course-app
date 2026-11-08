@@ -1,6 +1,15 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { Reorder, useDragControls } from "framer-motion";
 import {
   SUB_CATEGORIES,
@@ -11,7 +20,6 @@ import {
 import {
   REGION_CENTER,
   buildCourse,
-  isWithinRegionRange,
   naverMapLinkFor,
   walkingMinutesBetween,
   type CourseResult,
@@ -37,6 +45,24 @@ import { separateOverlaps } from "@/lib/lineOffset";
 import { computeProgress, formatMeters, turnIcon } from "@/lib/guidance";
 import { buildAiRequest, type AiPicks } from "@/lib/aiRecommend";
 import { saveCourse, toSavedCourse } from "@/lib/savedCourses";
+import {
+  DEFAULT_REGION,
+  DEFAULT_REGION_ID,
+  MAX_REGIONS,
+  REGIONS,
+  isWithinRegions,
+  regionsLabel,
+  resolveRegions,
+  type Region,
+} from "@/lib/regions";
+import {
+  getLivePlaces,
+  includesSampleRegion,
+  livePlacesVersion,
+  loadLivePlaces,
+  pendingLiveCount,
+  subscribeLivePlaces,
+} from "@/lib/livePlaces";
 import { AvatarCustomizer, AvatarFigure } from "./AvatarCustomizer";
 import { PrivacyPolicySheet } from "./PrivacyPolicySheet";
 import {
@@ -96,6 +122,33 @@ function generateId(prefix: string) {
     return `${prefix}-${crypto.randomUUID()}`;
   }
   return `${prefix}-${Date.now()}-${nextId++}`;
+}
+
+const REGIONS_STORAGE_KEY = "course-app:regions";
+
+/** 고른 지역들. 지도·장소 검색·추천이 모두 이 지역을 기준으로 동작한다. */
+type RegionContextValue = {
+  regions: Region[];
+  /** 첫 번째로 고른 지역의 중심(지도를 처음 열 때, 위치를 모를 때의 기준점). */
+  center: { lat: number; lng: number };
+  /** 이 지역의 추천 후보 장소를 아직 찾는 중이면 true. */
+  loadingPlaces: boolean;
+};
+const RegionContext = createContext<RegionContextValue>({
+  regions: [DEFAULT_REGION],
+  center: DEFAULT_REGION,
+  loadingPlaces: false,
+});
+function useRegionContext() {
+  return useContext(RegionContext);
+}
+
+/** 코스 계산에 쓸 장소 전체: 종로를 골랐으면 예시 데이터, 다른 지역은 TMAP에서 가져온 실제 장소. */
+function buildPool(regions: Region[]): Place[] {
+  return [
+    ...(includesSampleRegion(regions) ? places : []),
+    ...getLivePlaces(regions),
+  ];
 }
 
 /** 이전 버전에서 저장된 카테고리·세부 카테고리 이름을 지금 이름으로 바꾼다. */
@@ -305,7 +358,96 @@ function loadMeetTimes(): { start: number | null; end: number | null } {
 }
 
 function CourseBuilder() {
+  const [regionIds, setRegionIds] = useState<string[]>([DEFAULT_REGION_ID]);
+  const [regionsLoaded, setRegionsLoaded] = useState(false);
+  const regions = useMemo(() => resolveRegions(regionIds), [regionIds]);
+  // 장소 후보를 가져올 때마다 올라가서, 가져온 장소로 코스를 다시 계산하게 한다.
+  const liveVersion = useSyncExternalStore(
+    subscribeLivePlaces,
+    livePlacesVersion,
+    () => 0,
+  );
+  const [stagesForPlaces, setStagesForPlaces] = useState<Stage[]>([]);
+
+  useEffect(() => {
+    // 저장된 지역은 브라우저에서만 읽을 수 있어 마운트 후 한 번 읽는다.
+    try {
+      const raw = window.localStorage.getItem(REGIONS_STORAGE_KEY);
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      if (raw) setRegionIds(resolveRegions(JSON.parse(raw)).map((r) => r.id));
+    } catch {
+      // 못 읽으면 기본 지역(종로)으로 둔다.
+    }
+    setRegionsLoaded(true);
+  }, []);
+
+  useEffect(() => {
+    if (!regionsLoaded) return;
+    try {
+      window.localStorage.setItem(
+        REGIONS_STORAGE_KEY,
+        JSON.stringify(regionIds),
+      );
+    } catch {
+      // 저장에 실패해도 이번 화면에서는 고른 지역이 유지된다.
+    }
+  }, [regionIds, regionsLoaded]);
+
+  // 고른 지역 × 일정의 카테고리에 맞는 실제 장소 후보를 미리 가져온다.
+  useEffect(() => {
+    if (!regionsLoaded) return;
+    void loadLivePlaces(regions, stagesForPlaces);
+  }, [regions, stagesForPlaces, regionsLoaded]);
+
+  const regionValue = useMemo<RegionContextValue>(
+    () => ({
+      regions,
+      center: { lat: regions[0].lat, lng: regions[0].lng },
+      loadingPlaces: pendingLiveCount(regions, stagesForPlaces) > 0,
+    }),
+    // liveVersion: 후보를 가져오면 "찾는 중" 표시를 다시 계산한다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [regions, stagesForPlaces, liveVersion],
+  );
+
+  return (
+    <RegionContext.Provider value={regionValue}>
+      <CourseBuilderBody
+        regions={regions}
+        liveVersion={liveVersion}
+        onChangeRegions={(next) => setRegionIds(next.map((r) => r.id))}
+        onStagesChange={setStagesForPlaces}
+      />
+    </RegionContext.Provider>
+  );
+}
+
+function CourseBuilderBody({
+  regions,
+  liveVersion,
+  onChangeRegions,
+  onStagesChange,
+}: {
+  regions: Region[];
+  liveVersion: number;
+  onChangeRegions: (regions: Region[]) => void;
+  onStagesChange: (stages: Stage[]) => void;
+}) {
   const [stages, setStages] = useState<Stage[]>([]);
+  const [regionSheetOpen, setRegionSheetOpen] = useState(false);
+  const allCategories = !(
+    regions.length === 1 && includesSampleRegion(regions)
+  );
+  const regionNames = useMemo(() => regions.map((r) => r.name), [regions]);
+  const pool = useMemo(
+    () => buildPool(regions),
+    // liveVersion: 후보를 새로 가져오면 장소 목록을 다시 만든다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [regions, liveVersion],
+  );
+  useEffect(() => {
+    onStagesChange(stages);
+  }, [stages, onStagesChange]);
   const [maxTravelMinutes, setMaxTravelMinutes] = useState(
     DEFAULT_TRAVEL_MINUTES,
   );
@@ -383,7 +525,7 @@ function CourseBuilder() {
     return () => navigator.geolocation.clearWatch(watchId);
   }, [navigating]);
 
-  const avatarPoint = location ?? REGION_CENTER;
+  const avatarPoint = location ?? { lat: regions[0].lat, lng: regions[0].lng };
 
   useEffect(() => {
     // localStorage는 서버에 없는 브라우저 전용 저장소라 마운트 후에만 읽을 수 있다.
@@ -458,12 +600,12 @@ function CourseBuilder() {
     () =>
       buildCourse(
         stages.filter((s) => !isUnsetStage(s)),
-        places,
+        pool,
         maxTravelMinutes,
         overrides,
         planDate,
       ),
-    [stages, maxTravelMinutes, overrides, planDate],
+    [stages, pool, maxTravelMinutes, overrides, planDate],
   );
 
   function addRecommendStage(
@@ -582,6 +724,8 @@ function CourseBuilder() {
       startHour: number | null;
       endHour: number | null;
       planDate?: string;
+      regionNames: string[];
+      allCategories: boolean;
     },
   ): Promise<Stage[] | null> {
     const isSlot = (s: Stage) => isFillSlot(s, list);
@@ -630,6 +774,8 @@ function CourseBuilder() {
         startHour,
         endHour,
         planDate: planDate || undefined,
+        regionNames,
+        allCategories,
       };
       const filled = await fillSlots(next, aiInput);
       if (!filled) {
@@ -650,9 +796,10 @@ function CourseBuilder() {
         ),
       );
       try {
+        await loadLivePlaces(regions, filled);
         const baseline = buildCourse(
           filled.filter((s) => !isUnsetStage(s)),
-          places,
+          buildPool(regions),
           maxTravelMinutes,
           overrides,
           planDate,
@@ -688,6 +835,8 @@ function CourseBuilder() {
       startHour,
       endHour,
       planDate: planDate || undefined,
+      regionNames,
+      allCategories,
     };
     // 출발지 말고는 단계가 하나도 없을 때만 AI가 단계 수까지 정한다("상관없음" 칸은 칸으로 센다).
     // 출발지만 추천받기로 한 경우(originOnly)에는 뒤 일정을 짜지 않는다.
@@ -757,9 +906,10 @@ function CourseBuilder() {
       }
 
       try {
+        await loadLivePlaces(regions, working);
         const baseline = buildCourse(
           working,
-          places,
+          buildPool(regions),
           maxTravelMinutes,
           {},
           planDate,
@@ -886,6 +1036,8 @@ function CourseBuilder() {
             makingCourse={makingCourse}
             onBackToHome={() => setOnHome(true)}
             onReset={resetStages}
+            regions={regions}
+            onOpenRegionSheet={() => setRegionSheetOpen(true)}
           />
         </div>
       )}
@@ -906,6 +1058,18 @@ function CourseBuilder() {
         >
           {aiMessage}
         </div>
+      )}
+
+      {regionSheetOpen && (
+        <RegionSheet
+          selected={regions}
+          onClose={() => setRegionSheetOpen(false)}
+          onApply={(next) => {
+            onChangeRegions(next);
+            setOverrides({}); // 지역이 바뀌면 추천을 새로 계산한다.
+            setRegionSheetOpen(false);
+          }}
+        />
       )}
 
       {addSheetOpen && (
@@ -1004,7 +1168,11 @@ function InputView({
   makingCourse,
   onBackToHome,
   onReset,
+  regions,
+  onOpenRegionSheet,
 }: {
+  regions: Region[];
+  onOpenRegionSheet: () => void;
   planDate: string;
   onSetPlanDate: (date: string) => void;
   startHour: number | null;
@@ -1074,9 +1242,17 @@ function InputView({
           <label className="text-sm font-medium text-zinc-600 dark:text-zinc-400">
             지역
           </label>
-          <div className="flex h-12 w-full items-center rounded-xl border border-zinc-300 bg-zinc-50 px-4 text-base text-black dark:border-zinc-700 dark:bg-zinc-900 dark:text-white">
-            종로
-          </div>
+          <button
+            type="button"
+            onClick={onOpenRegionSheet}
+            aria-label={`지역 선택: ${regionsLabel(regions, 3)}`}
+            className="flex h-12 w-full items-center justify-between gap-2 rounded-xl border border-zinc-300 bg-zinc-50 px-4 text-left text-base text-black dark:border-zinc-700 dark:bg-zinc-900 dark:text-white"
+          >
+            <span className="min-w-0 truncate">{regionsLabel(regions)}</span>
+            <span aria-hidden className="shrink-0 text-xs text-zinc-500">
+              ▾
+            </span>
+          </button>
         </section>
 
         <section className="flex min-w-0 flex-1 flex-col gap-2">
@@ -1887,6 +2063,129 @@ function AddStageSheet({
   );
 }
 
+/** 지역 선택 창. 최대 MAX_REGIONS곳까지 고를 수 있고, "적용"을 눌러야 바뀐다. */
+function RegionSheet({
+  selected,
+  onClose,
+  onApply,
+}: {
+  selected: Region[];
+  onClose: () => void;
+  onApply: (regions: Region[]) => void;
+}) {
+  const [picked, setPicked] = useState<Region[]>(selected);
+  const [query, setQuery] = useState("");
+  const q = query.trim();
+  const visible = REGIONS.filter(
+    (r) => !q || r.name.includes(q) || r.area.includes(q),
+  );
+  const areas = [...new Set(visible.map((r) => r.area))];
+
+  function toggle(region: Region) {
+    setPicked((prev) => {
+      if (prev.some((r) => r.id === region.id)) {
+        return prev.length > 1 ? prev.filter((r) => r.id !== region.id) : prev;
+      }
+      return prev.length >= MAX_REGIONS ? prev : [...prev, region];
+    });
+  }
+
+  return (
+    <div className="fixed inset-0 z-30 flex items-end justify-center bg-black/50">
+      <div
+        role="dialog"
+        aria-label="지역 선택"
+        className="flex h-[80vh] w-full max-w-md flex-col gap-3 rounded-t-2xl bg-white p-4 dark:bg-zinc-900"
+      >
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-bold text-black dark:text-white">
+            지역 선택
+          </h2>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="닫기"
+            className="flex h-10 w-10 items-center justify-center rounded-lg text-xl text-zinc-500"
+          >
+            ✕
+          </button>
+        </div>
+        <p className="text-xs text-zinc-500 dark:text-zinc-400">
+          최대 {MAX_REGIONS}곳까지 고를 수 있어요. 고른 지역 주변에서 지도·장소
+          검색·추천이 돼요.
+        </p>
+        <div className="flex flex-wrap gap-1.5" aria-label="고른 지역">
+          {picked.map((r) => (
+            <button
+              key={r.id}
+              type="button"
+              onClick={() => toggle(r)}
+              aria-label={`${r.name} 빼기`}
+              className="flex h-8 items-center gap-1 rounded-full bg-black px-3 text-sm font-medium text-white dark:bg-white dark:text-black"
+            >
+              {r.name}
+              <span aria-hidden>✕</span>
+            </button>
+          ))}
+        </div>
+        <input
+          type="search"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="지역 이름 검색 (예: 해운대, 제주)"
+          aria-label="지역 이름 검색"
+          className="h-11 w-full rounded-xl border border-zinc-300 bg-white px-3 text-base text-black dark:border-zinc-700 dark:bg-zinc-800 dark:text-white"
+        />
+        <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto">
+          {areas.length === 0 && (
+            <p className="text-sm text-zinc-500 dark:text-zinc-400">
+              맞는 지역이 없어요.
+            </p>
+          )}
+          {areas.map((area) => (
+            <div key={area} className="flex flex-col gap-1.5">
+              <span className="text-xs font-semibold text-zinc-500 dark:text-zinc-400">
+                {area}
+              </span>
+              <div className="flex flex-wrap gap-1.5">
+                {visible
+                  .filter((r) => r.area === area)
+                  .map((r) => {
+                    const on = picked.some((p) => p.id === r.id);
+                    const full = !on && picked.length >= MAX_REGIONS;
+                    return (
+                      <button
+                        key={r.id}
+                        type="button"
+                        onClick={() => toggle(r)}
+                        aria-pressed={on}
+                        disabled={full}
+                        className={`h-10 rounded-full border px-4 text-sm font-medium disabled:opacity-35 ${
+                          on
+                            ? "border-black bg-black text-white dark:border-white dark:bg-white dark:text-black"
+                            : "border-zinc-300 text-zinc-700 dark:border-zinc-700 dark:text-zinc-200"
+                        }`}
+                      >
+                        {r.name}
+                      </button>
+                    );
+                  })}
+              </div>
+            </div>
+          ))}
+        </div>
+        <button
+          type="button"
+          onClick={() => onApply(picked)}
+          className="h-12 w-full rounded-xl bg-black text-base font-semibold text-white dark:bg-white dark:text-black"
+        >
+          {regionsLabel(picked, 3)} 적용
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function DesignatedPlaceSheet({
   initial,
   recentPlaces,
@@ -1902,6 +2201,7 @@ function DesignatedPlaceSheet({
   onClose: () => void;
   onSubmit: (place: DesignatedPlace) => void;
 }) {
+  const { regions, center } = useRegionContext();
   const [query, setQuery] = useState("");
   // 지도 창: 현재 위치에서 시작(current) / 빈 지도에서 시작(free) / 닫힘(null).
   const [mapPick, setMapPick] = useState<"current" | "free" | null>(null);
@@ -1924,17 +2224,23 @@ function DesignatedPlaceSheet({
     if (trimmedQuery.length < 2) return;
     const ctrl = new AbortController();
     const timer = setTimeout(() => {
-      fetch(`/api/maps/geocode?q=${encodeURIComponent(trimmedQuery)}`, {
-        signal: ctrl.signal,
-      })
+      fetch(
+        `/api/maps/geocode?q=${encodeURIComponent(trimmedQuery)}&lat=${center.lat}&lng=${center.lng}`,
+        {
+          signal: ctrl.signal,
+        },
+      )
         .then((r) => (r.ok ? r.json() : { results: [] }))
         .then((d: { results?: PlaceSearchResult[] }) =>
           setGeo({ q: trimmedQuery, items: d.results ?? [] }),
         )
         .catch(() => {});
-      fetch(`/api/tmap/search?q=${encodeURIComponent(trimmedQuery)}`, {
-        signal: ctrl.signal,
-      })
+      fetch(
+        `/api/tmap/search?q=${encodeURIComponent(trimmedQuery)}&lat=${center.lat}&lng=${center.lng}`,
+        {
+          signal: ctrl.signal,
+        },
+      )
         .then((r) => (r.ok ? r.json() : { results: [] }))
         .then((d: { results?: PlaceSearchResult[] }) =>
           setTmap({ q: trimmedQuery, items: d.results ?? [] }),
@@ -1945,7 +2251,7 @@ function DesignatedPlaceSheet({
       clearTimeout(timer);
       ctrl.abort();
     };
-  }, [trimmedQuery]);
+  }, [trimmedQuery, center.lat, center.lng]);
   // 실제 검색 결과(장소 이름은 TMAP, 주소는 네이버)를 먼저 보여준다.
   // 아직 안 왔거나 둘 다 비어 있으면 예시 데이터로 대신한다(키가 없을 때도 동작하게).
   const results = useMemo(() => {
@@ -1953,8 +2259,10 @@ function DesignatedPlaceSheet({
       ...(tmap && tmap.q === trimmedQuery ? tmap.items : []),
       ...(geo && geo.q === trimmedQuery ? geo.items : []),
     ];
-    return real.length > 0 ? real : searchPlaces(query);
-  }, [query, geo, tmap, trimmedQuery]);
+    if (real.length > 0) return real;
+    // 예시 데이터(종로)는 종로를 골랐을 때만 보여준다.
+    return includesSampleRegion(regions) ? searchPlaces(query) : [];
+  }, [query, geo, tmap, trimmedQuery, regions]);
 
   const hasQuery = query.trim().length > 0;
 
@@ -1976,7 +2284,7 @@ function DesignatedPlaceSheet({
     lng: currentLocation.lng,
   };
   const currentOutside =
-    currentPlace !== null && !isWithinRegionRange(currentPlace);
+    currentPlace !== null && !isWithinRegions(currentPlace, regions);
   const locationHint =
     locationStatus === "loading" || locationStatus === "idle"
       ? "현재 위치를 확인하는 중이에요."
@@ -2063,10 +2371,10 @@ function DesignatedPlaceSheet({
                     {pendingPlace.address}
                   </span>
                 )}
-                {!isWithinRegionRange(pendingPlace) && (
+                {!isWithinRegions(pendingPlace, regions) && (
                   <span className="text-xs text-amber-600 dark:text-amber-400">
-                    종로 일대 밖 · 코스에는 들어가지만 주변 추천은 종로
-                    일대에서만 돼요
+                    {regionsLabel(regions)} 밖 · 코스에는 들어가지만 주변 추천은
+                    고른 지역에서만 돼요
                   </span>
                 )}
               </span>
@@ -2082,7 +2390,7 @@ function DesignatedPlaceSheet({
           ) : (
             <ul className="flex flex-col gap-2">
               {results.map((p) => {
-                const outside = !isWithinRegionRange(p);
+                const outside = !isWithinRegions(p, regions);
                 return (
                   <li key={p.id}>
                     <button
@@ -2103,8 +2411,8 @@ function DesignatedPlaceSheet({
                       </span>
                       {outside && (
                         <span className="text-xs text-amber-600 dark:text-amber-400">
-                          종로 일대 밖 · 코스에는 들어가지만 주변 추천은 종로
-                          일대에서만 돼요
+                          {regionsLabel(regions)} 밖 · 코스에는 들어가지만 주변
+                          추천은 고른 지역에서만 돼요
                         </span>
                       )}
                     </button>
@@ -2142,8 +2450,8 @@ function DesignatedPlaceSheet({
         )}
 
         <p className="mt-auto text-xs text-zinc-400 dark:text-zinc-500">
-          지금은 종로 일대 대표 장소와 예시 장소 안에서만 검색돼요. 네이버 키를
-          연결하면 실제 장소 검색으로 바뀌어요.
+          {regionsLabel(regions)} 주변을 먼저 보여드려요. 지역 밖 장소도 이름을
+          정확히 치면 찾을 수 있어요.
         </p>
       </div>
 
@@ -2182,12 +2490,14 @@ function DesignatedPlaceSheet({
  * 지도를 눌러 위치를 고르는 창. 네이버 지도를 연결하기 전이라 종로 일대를 그린 임시 지도다.
  * 지도를 누르면 핀이 꽂히고, "완료"를 누르면 그 좌표가 지정 장소 창의 "선택한 위치"로 올라간다.
  */
-const PICK_MAP_BOUNDS = {
-  minLat: REGION_CENTER.lat - 0.012,
-  maxLat: REGION_CENTER.lat + 0.012,
-  minLng: REGION_CENTER.lng - 0.015,
-  maxLng: REGION_CENTER.lng + 0.015,
-};
+function pickMapBounds(center: { lat: number; lng: number }) {
+  return {
+    minLat: center.lat - 0.012,
+    maxLat: center.lat + 0.012,
+    minLng: center.lng - 0.015,
+    maxLng: center.lng + 0.015,
+  };
+}
 
 function MapPickSheet({
   title,
@@ -2235,7 +2545,8 @@ function MapPickSheet({
       ? { address: addr.address, name: addr.name }
       : { address: null, name: null };
   const drawable = MAP_VIEW_SIZE - MAP_MARGIN * 2;
-  const b = PICK_MAP_BOUNDS;
+  const { center: regionCenter } = useRegionContext();
+  const b = pickMapBounds(regionCenter);
 
   function onTap(e: React.MouseEvent<SVGSVGElement>) {
     const rect = e.currentTarget.getBoundingClientRect();
@@ -2250,7 +2561,7 @@ function MapPickSheet({
   }
 
   const pinRaw = picked ? projectToMap({ ...picked, name: "" }, b) : null;
-  // 임시 지도(종로 일대) 밖이면 핀을 그리지 않고 안내만 한다.
+  // 임시 지도(고른 지역 일대) 밖이면 핀을 그리지 않고 안내만 한다.
   const pin =
     pinRaw &&
     pinRaw.x >= 0 &&
@@ -2296,7 +2607,7 @@ function MapPickSheet({
         </p>
         {maps !== "ready" && pinOffMap && (
           <p className="text-xs text-amber-600 dark:text-amber-400">
-            현재 위치가 임시 지도(종로 일대) 밖이라 핀이 보이지 않아요. 그대로
+            현재 위치가 임시 지도 범위 밖이라 핀이 보이지 않아요. 그대로
             지정하거나 지도를 눌러 옮길 수 있어요.
           </p>
         )}
@@ -2305,7 +2616,7 @@ function MapPickSheet({
             <NaverMapCanvas
               ariaLabel="네이버 지도(움직여서 위치 고르기)"
               className="h-full w-full"
-              initialCenter={initial ?? REGION_CENTER}
+              initialCenter={initial ?? regionCenter}
               initialZoom={17}
               onMovingChange={setMoving}
               onCenterChange={(c) => {
@@ -2428,8 +2739,8 @@ function MapPickSheet({
         </button>
         {maps !== "ready" && (
           <p className="text-xs text-zinc-400 dark:text-zinc-500">
-            지금은 종로 일대를 그린 임시 지도예요. 네이버 지도를 불러오면 실제
-            지도로 바뀌어요.
+            지금은 고른 지역 일대를 그린 임시 지도예요. 네이버 지도를 불러오면
+            실제 지도로 바뀌어요.
           </p>
         )}
       </div>
@@ -2567,6 +2878,7 @@ function ResultView({
         ? "saved"
         : "failed"
       : "idle";
+  const { loadingPlaces } = useRegionContext();
   const bodyRef = useRef<HTMLDivElement>(null);
   const split = useResizableSplit(DEFAULT_LIST_RATIO, bodyRef);
   const openStageIndex = result.stages.findIndex(
@@ -2649,8 +2961,9 @@ function ResultView({
                 </div>
               </div>
               <span className="text-sm text-zinc-600 dark:text-zinc-400">
-                ★ {stageResult.selected.rating.toFixed(1)} · 리뷰{" "}
-                {stageResult.selected.reviewCount.toLocaleString()}개
+                {stageResult.selected.source === "tmap"
+                  ? stageResult.selected.description
+                  : `★ ${stageResult.selected.rating.toFixed(1)} · 리뷰 ${stageResult.selected.reviewCount.toLocaleString()}개`}
               </span>
             </div>
             <div className="flex shrink-0 items-center gap-1.5">
@@ -2739,11 +3052,22 @@ function ResultView({
         </h1>
       </div>
 
+      {loadingPlaces && (
+        <p
+          role="status"
+          className="mx-auto w-full max-w-md px-4 pb-2 text-sm text-zinc-500 dark:text-zinc-400"
+        >
+          선택한 지역에서 장소를 찾는 중이에요…
+        </p>
+      )}
+
       {!result.success ? (
         <div className="mx-auto w-full max-w-md px-4 pb-6">
           <div className="flex flex-col gap-2 rounded-xl border border-zinc-300 p-4 dark:border-zinc-700">
             <p className="text-base text-zinc-600 dark:text-zinc-300">
-              {failedIndex + 1}번째 단계에서 조건에 맞는 곳을 찾지 못했어요.
+              {loadingPlaces
+                ? "장소를 불러오면 코스를 보여드릴게요."
+                : `${failedIndex + 1}번째 단계에서 조건에 맞는 곳을 찾지 못했어요.`}
             </p>
             {blockingDesignated && blockingDesignated.kind === "designated" ? (
               <p className="text-sm text-zinc-500 dark:text-zinc-400">
@@ -3158,7 +3482,9 @@ function ReplaceSheet({
                         {isApplied ? " (현재 적용됨)" : ""}
                       </span>
                       <span className="shrink-0 text-sm text-zinc-600 dark:text-zinc-400">
-                        ★ {candidate.place.rating.toFixed(1)}
+                        {candidate.place.source === "tmap"
+                          ? candidate.place.region
+                          : `★ ${candidate.place.rating.toFixed(1)}`}
                       </span>
                     </div>
                     <span className="text-sm text-zinc-500 dark:text-zinc-400">
@@ -3854,7 +4180,7 @@ function NavigateView({
         >
           <p className="text-xs font-medium text-zinc-500 dark:text-zinc-400">
             출발지({origin.name})까지 길 안내
-            {!locationKnown && " · 위치 권한이 없어 종로 중심에서 안내 중"}
+            {!locationKnown && " · 위치 권한이 없어 고른 지역 중심에서 안내 중"}
           </p>
           {!progress ? (
             <p className="mt-1 text-base font-semibold text-black dark:text-white">

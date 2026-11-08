@@ -1,7 +1,21 @@
 import { NextResponse } from "next/server";
 
 // TMAP POI 통합검색(장소 이름 → 이름·주소·좌표). appKey는 서버에서만 읽는다.
-const CENTER = { lat: 37.5759, lng: 126.9825 }; // 종로 중심: 가까운 곳을 먼저 보여주려고 넘긴다.
+const DEFAULT_CENTER = { lat: 37.5759, lng: 126.9825 }; // 지역을 못 받았을 때의 기준(종로).
+
+/** 화면에서 넘긴 중심 좌표(고른 지역). 가까운 곳을 먼저 보여주려고 쓰고, 한국 밖이거나 잘못된 값이면 기본값. */
+function centerFrom(params: URLSearchParams) {
+  const lat = Number(params.get("lat"));
+  const lng = Number(params.get("lng"));
+  const ok =
+    params.has("lat") &&
+    params.has("lng") &&
+    lat >= 33 &&
+    lat <= 39 &&
+    lng >= 124 &&
+    lng <= 132;
+  return ok ? { lat, lng } : DEFAULT_CENTER;
+}
 
 type Poi = {
   id: string;
@@ -27,7 +41,9 @@ function joinNo(a?: string, b?: string): string {
 }
 
 export async function GET(request: Request) {
-  const q = new URL(request.url).searchParams.get("q")?.trim() ?? "";
+  const params = new URL(request.url).searchParams;
+  const q = params.get("q")?.trim() ?? "";
+  const CENTER = centerFrom(params);
   const key = process.env.TMAP_APP_KEY;
   if (!q || q.length > 60 || !key) return NextResponse.json({ results: [] });
 

@@ -73,6 +73,8 @@ const DETOUR_FACTOR = 1.3;
 const REVIEW_BONUS_WEIGHT = 0.5;
 const REVIEW_BONUS_REFERENCE_COUNT = 2000;
 const PROXIMITY_BONUS_WEIGHT = 0.5;
+/** 평점 정보가 없는 장소(실제 장소 검색 결과)를 점수에 넣을 때 쓰는 중간값. */
+const UNRATED_PLACE_RATING = 4;
 
 /** 1차 추천 데이터 범위(종로 일대) 중심과 반경. 지정 장소가 이 범위 밖인지 확인할 때 쓴다. */
 export const REGION_CENTER = { lat: 37.5759, lng: 126.9825 };
@@ -167,7 +169,7 @@ function scoreCandidate(
       travelMinutesToNextDesignated <= maxTravelMinutes);
 
   const score =
-    place.rating +
+    (place.rating > 0 ? place.rating : UNRATED_PLACE_RATING) +
     reviewBonus(place.reviewCount) +
     proximityBonus(travelMinutesFromPrevious, maxTravelMinutes) +
     proximityBonus(travelMinutesToNextDesignated, maxTravelMinutes);
@@ -228,9 +230,15 @@ export function buildCourse(
     const nextDesignated =
       nextStage?.kind === "designated" ? nextStage.place : null;
 
-    const matching = places.filter(
-      (place) => matchesStage(place, stage) && !usedPlaceIds.has(place.id),
-    );
+    // 같은 장소가 여러 검색 결과로 중복돼 들어올 수 있어 id당 하나만 둔다.
+    const seenIds = new Set<string>();
+    const matching = places.filter((place) => {
+      if (!matchesStage(place, stage) || usedPlaceIds.has(place.id))
+        return false;
+      if (seenIds.has(place.id)) return false;
+      seenIds.add(place.id);
+      return true;
+    });
     const pool = matching.filter((place) => !isClosedOn(place, planDate));
     const closedExcludedCount = matching.length - pool.length;
 

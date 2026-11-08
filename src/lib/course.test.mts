@@ -357,3 +357,35 @@ test("예시 데이터는 모두 운영 시간과 휴무 요일 정보를 갖고
     );
   }
 });
+
+test("buildCourse: 평점 정보가 없는 실제 장소(rating 0)도 중간 점수로 추천되고, 중복 id는 하나만 쓴다", () => {
+  const live = (id: string, lat: number): Place => ({
+    ...place({ id }),
+    rating: 0,
+    reviewCount: 0,
+    lat,
+    lng: 127,
+    source: "tmap",
+  });
+  const near = live("tmap-1", 35.0);
+  const far = live("tmap-2", 35.004);
+  const result = buildCourse(
+    [
+      {
+        id: "o",
+        kind: "designated",
+        isOrigin: true,
+        place: { id: "p", name: "출발", address: "", lat: 35.0, lng: 127 },
+      },
+      { id: "s", kind: "recommend", category: near.category },
+    ],
+    [far, near, near],
+    15,
+  );
+  const stage = result.stages[1];
+  assert.equal(stage.kind, "recommend");
+  if (stage.kind === "recommend") {
+    assert.equal(stage.selected?.id, "tmap-1");
+    assert.equal(stage.candidates.length, 2);
+  }
+});

@@ -35,6 +35,10 @@ export type Place = {
   closeTime: string;
   /** 정기 휴무 요일. 0=일 1=월 2=화 3=수 4=목 5=금 6=토. 비어 있으면 휴무일 없음. */
   closedDays: number[];
+  /** 실제 장소 검색(TMAP)에서 가져온 장소면 "tmap". 평점·영업시간 정보가 없다(rating 0, openTime ""). */
+  source?: "tmap";
+  /** 실제 장소 검색에서 가져온 경우 주소(동 단위). */
+  address?: string;
 };
 
 export const places: Place[] = [

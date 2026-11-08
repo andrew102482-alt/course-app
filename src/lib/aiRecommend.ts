@@ -1,4 +1,4 @@
-import { places, type PlaceCategory } from "../data/places.ts";
+import { SUB_CATEGORIES, places, type PlaceCategory } from "../data/places.ts";
 import type { CourseResult } from "./course.ts";
 
 /** AI에게 보내는 후보 장소(추천 단계마다 점수 순 상위 몇 곳). */
@@ -24,6 +24,7 @@ export type AiStageInput = {
 };
 
 export type AiRecommendRequest = {
+  regionNames?: string[];
   themeNote: string;
   startHour: number | null;
   endHour: number | null;
@@ -41,7 +42,7 @@ export function buildAiRequest(
   baseline: CourseResult,
   input: Pick<
     AiRecommendRequest,
-    "themeNote" | "startHour" | "endHour" | "planDate"
+    "themeNote" | "startHour" | "endHour" | "planDate" | "regionNames"
   >,
 ): AiRecommendRequest {
   const stages: AiStageInput[] = baseline.stages.map((result) => {
@@ -76,6 +77,10 @@ export function buildAiRequest(
   return { ...input, stages };
 }
 
+function regionText(names: string[] | undefined): string {
+  return names && names.length > 0 ? names.join(", ") : "서울 종로";
+}
+
 function formatHour(hour: number | null): string {
   if (hour === null) return "상관없음";
   const h = hour % 24;
@@ -100,6 +105,7 @@ export function buildPrompt(req: AiRecommendRequest): {
   ].join("\n");
 
   const lines: string[] = [];
+  lines.push(`지역: ${regionText(req.regionNames)}`);
   lines.push(`일정 날짜: ${req.planDate ?? "정하지 않음"}`);
   lines.push(`만나는 시간: ${formatHour(req.startHour)}`);
   lines.push(`헤어지는 시간: ${formatHour(req.endHour)}`);
@@ -116,7 +122,7 @@ export function buildPrompt(req: AiRecommendRequest): {
     lines.push(`${i + 1}. [추천] ${stage.label} (stageId: ${stage.id})`);
     for (const c of stage.candidates) {
       lines.push(
-        `   - placeId: ${c.id} | ${c.name}${c.subCategory ? ` (${c.subCategory})` : ""} | 평점 ${c.rating} (${c.reviewCount}명) | 영업 ${c.openTime}~${c.closeTime} | 이전 장소에서 ${c.travelMinutes ?? "-"}분 | ${c.description}`,
+        `   - placeId: ${c.id} | ${c.name}${c.subCategory ? ` (${c.subCategory})` : ""} | ${c.rating > 0 ? `평점 ${c.rating} (${c.reviewCount}명)` : "평점 정보 없음"} | ${c.openTime ? `영업 ${c.openTime}~${c.closeTime}` : "영업시간 정보 없음"} | 이전 장소에서 ${c.travelMinutes ?? "-"}분 | ${c.description}`,
       );
     }
   });
@@ -169,6 +175,10 @@ export function parsePicks(text: string, req: AiRecommendRequest): AiPicks {
 /** 일정 단계가 하나도 없을 때, AI에게 단계 자체를 짜 달라고 요청하는 본문. */
 export type AiPlanRequest = {
   mode: "plan";
+  /** true면 장소가 있는 카테고리 제한 없이 모든 카테고리를 쓴다(예시 데이터 밖 지역). */
+  allCategories?: boolean;
+  /** 코스를 짜는 지역 이름들(분위기 판단에 참고). */
+  regionNames?: string[];
   themeNote: string;
   startHour: number | null;
   endHour: number | null;
@@ -183,7 +193,9 @@ export const AI_MAX_PLANNED_STAGES = 5;
  * 실제로 장소가 있는 카테고리 → 세부 카테고리 목록.
  * AI가 장소가 없는 종류로 단계를 짜면 코스가 막히므로, 단계는 여기 있는 것만 쓰게 한다.
  */
-export function availableCatalog(): Record<string, string[]> {
+export function availableCatalog(all = false): Record<string, string[]> {
+  // 예시 데이터가 없는 지역(실제 장소 검색)에서는 모든 카테고리에 후보가 있다고 본다.
+  if (all) return Object.fromEntries(Object.entries(SUB_CATEGORIES));
   const catalog: Record<string, Set<string>> = {};
   for (const place of places) {
     const subs = (catalog[place.category] ??= new Set());
@@ -198,7 +210,7 @@ export function buildPlanPrompt(req: AiPlanRequest): {
   system: string;
   user: string;
 } {
-  const available = availableCatalog();
+  const available = availableCatalog(req.allCategories);
   const catalog = Object.entries(available)
     .map(([c, subs]) =>
       subs.length > 0
@@ -215,6 +227,7 @@ export function buildPlanPrompt(req: AiPlanRequest): {
     "시간이 정해지지 않았으면 3개 안팎으로 정한다. 응답은 JSON만 출력한다.",
   ].join("\n");
   const user = [
+    `지역: ${regionText(req.regionNames)}`,
     `일정 날짜: ${req.planDate ?? "정하지 않음"}`,
     `만나는 시간: ${formatHour(req.startHour)}`,
     `헤어지는 시간: ${formatHour(req.endHour)}`,
@@ -229,6 +242,7 @@ export function buildPlanPrompt(req: AiPlanRequest): {
 export function parsePlan(
   text: string,
   max: number = AI_MAX_PLANNED_STAGES,
+  allCategories = false,
 ): AiPlannedStage[] {
   let raw: unknown;
   try {
@@ -246,7 +260,7 @@ export function parsePlan(
   const list = (raw as { stages?: unknown } | null)?.stages;
   if (!Array.isArray(list)) return [];
 
-  const available = availableCatalog();
+  const available = availableCatalog(allCategories);
   const result: AiPlannedStage[] = [];
   for (const item of list) {
     const category = (item as { category?: unknown })?.category;
@@ -264,6 +278,8 @@ export function parsePlan(
 /** 일정 중 "상관없음" 칸만 AI가 채워 달라고 요청하는 본문. label이 null인 칸이 AI가 정할 칸이다. */
 export type AiFillRequest = {
   mode: "fill";
+  allCategories?: boolean;
+  regionNames?: string[];
   themeNote: string;
   startHour: number | null;
   endHour: number | null;
@@ -279,7 +295,7 @@ export function buildFillPrompt(req: AiFillRequest): {
   system: string;
   user: string;
 } {
-  const available = availableCatalog();
+  const available = availableCatalog(req.allCategories);
   const catalog = Object.entries(available)
     .map(([c, subs]) =>
       subs.length > 0
@@ -297,6 +313,7 @@ export function buildFillPrompt(req: AiFillRequest): {
     `'?' 칸은 모두 ${slots}개이고, 칸 순서대로 정확히 ${slots}개를 답한다. 응답은 JSON만 출력한다.`,
   ].join("\n");
   const lines = [
+    `지역: ${regionText(req.regionNames)}`,
     `일정 날짜: ${req.planDate ?? "정하지 않음"}`,
     `만나는 시간: ${formatHour(req.startHour)}`,
     `헤어지는 시간: ${formatHour(req.endHour)}`,
@@ -311,7 +328,11 @@ export function buildFillPrompt(req: AiFillRequest): {
 }
 
 /** fill 응답에서 칸 수만큼의 단계를 꺼낸다. 칸 수에 모자라면 빈 결과(실패)로 본다. */
-export function parseFill(text: string, slots: number): AiPlannedStage[] {
-  const parsed = parsePlan(text, slots);
+export function parseFill(
+  text: string,
+  slots: number,
+  allCategories = false,
+): AiPlannedStage[] {
+  const parsed = parsePlan(text, slots, allCategories);
   return parsed.length === slots ? parsed : [];
 }

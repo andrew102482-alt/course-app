@@ -61,7 +61,7 @@ const PLAN_SCHEMA = {
             properties: {
               category: {
                 type: "string",
-                enum: Object.keys(availableCatalog()),
+                enum: Object.keys(availableCatalog(true)),
               },
               subCategory: { type: "string" },
             },
@@ -76,11 +76,21 @@ const PLAN_SCHEMA = {
   },
 } as const;
 
+function validRegionNames(v: unknown): boolean {
+  return (
+    v === undefined ||
+    (Array.isArray(v) &&
+      v.length <= 5 &&
+      v.every((n) => typeof n === "string" && n.length <= 30))
+  );
+}
+
 function isValidPlanRequest(body: unknown): body is AiPlanRequest {
   if (!body || typeof body !== "object") return false;
   const b = body as Partial<AiPlanRequest>;
   return (
     b.mode === "plan" &&
+    validRegionNames(b.regionNames) &&
     typeof b.themeNote === "string" &&
     b.themeNote.length <= 500
   );
@@ -89,7 +99,7 @@ function isValidPlanRequest(body: unknown): body is AiPlanRequest {
 function isValidFillRequest(body: unknown): body is AiFillRequest {
   if (!body || typeof body !== "object") return false;
   const b = body as Partial<AiFillRequest>;
-  if (b.mode !== "fill") return false;
+  if (b.mode !== "fill" || !validRegionNames(b.regionNames)) return false;
   if (typeof b.themeNote !== "string" || b.themeNote.length > 500) return false;
   if (
     !Array.isArray(b.stages) ||
@@ -111,6 +121,7 @@ function isValidRequest(body: unknown): body is AiRecommendRequest {
   if (!body || typeof body !== "object") return false;
   const b = body as Partial<AiRecommendRequest>;
   if (typeof b.themeNote !== "string" || b.themeNote.length > 500) return false;
+  if (!validRegionNames(b.regionNames)) return false;
   if (
     !Array.isArray(b.stages) ||
     b.stages.length === 0 ||
@@ -190,7 +201,9 @@ export async function POST(request: Request) {
       if (text === null) {
         return NextResponse.json({ error: "upstream" }, { status: 502 });
       }
-      return NextResponse.json({ stages: parsePlan(text) });
+      return NextResponse.json({
+        stages: parsePlan(text, undefined, body.allCategories === true),
+      });
     }
     if (isValidFillRequest(body)) {
       const text = await askModel(apiKey, buildFillPrompt(body), PLAN_SCHEMA);
@@ -198,7 +211,11 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: "upstream" }, { status: 502 });
       }
       return NextResponse.json({
-        stages: parseFill(text, countFillSlots(body.stages)),
+        stages: parseFill(
+          text,
+          countFillSlots(body.stages),
+          body.allCategories === true,
+        ),
       });
     }
     if (!isValidRequest(body)) {
