@@ -5,6 +5,8 @@ export type RecommendStage = {
   kind: "recommend";
   category: PlaceCategory;
   subCategory?: string;
+  /** 사용자가 직접 적은 "가고 싶은 장소 유형"(AI가 카테고리를 정할 때 쓴 글). 장소 고를 때 AI에게도 알려 준다. */
+  note?: string;
   /** 일정 맨 앞의 출발지 칸이면 true(지우거나 순서를 옮길 수 없다). */
   isOrigin?: boolean;
 };

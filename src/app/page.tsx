@@ -12,7 +12,6 @@ import {
 } from "react";
 import { Reorder, useDragControls } from "framer-motion";
 import {
-  SUB_CATEGORIES,
   places,
   type Place,
   type PlaceCategory,
@@ -43,7 +42,12 @@ import { useNaverMaps } from "@/lib/useNaverMaps";
 import { useRoadPaths } from "@/lib/useRoadPaths";
 import { separateOverlaps } from "@/lib/lineOffset";
 import { computeProgress, formatMeters, turnIcon } from "@/lib/guidance";
-import { buildAiRequest, type AiPicks } from "@/lib/aiRecommend";
+import {
+  buildAiRequest,
+  MAX_STAGE_TYPE_NOTE_LENGTH,
+  stageLabel,
+  type AiPicks,
+} from "@/lib/aiRecommend";
 import { saveCourse, toSavedCourse } from "@/lib/savedCourses";
 import {
   getBlurb,
@@ -94,6 +98,10 @@ const MIN_TRAVEL_MINUTES = 5;
 const TRAVEL_MINUTES_STEP = 5;
 const MAX_TRAVEL_MINUTES = 30;
 const DEFAULT_TRAVEL_MINUTES = 15;
+/** 최대 이동시간을 "상관 없음"으로 고른 상태를 나타내는 값(저장도 이 값으로 한다). */
+const UNLIMITED_TRAVEL = 0;
+/** "상관 없음"일 때 계산에 쓰는 이동시간 한도(사실상 제한 없음). */
+const UNLIMITED_TRAVEL_LIMIT_MINUTES = 120;
 const MAX_STAGES = 8;
 const MAX_RECENT_DESIGNATED = 10;
 
@@ -196,9 +204,7 @@ function isFillSlot(stage: Stage, all: Stage[]): boolean {
 /** AI에게 알려 줄 단계 이름. 추천 단계는 카테고리(+세부), 지정 단계는 장소 이름. */
 function describeStageForAi(stage: Stage): string {
   if (stage.kind === "recommend") {
-    return stage.subCategory
-      ? `${stage.category} / ${stage.subCategory}`
-      : stage.category;
+    return stageLabel(stage.category, stage.subCategory, stage.note);
   }
   return stage.isOrigin ? `출발지: ${stage.place.name}` : stage.place.name;
 }
@@ -451,6 +457,11 @@ function CourseBuilderBody({
   const [maxTravelMinutes, setMaxTravelMinutes] = useState(
     DEFAULT_TRAVEL_MINUTES,
   );
+  // 화면에는 maxTravelMinutes(0이면 상관 없음)를 보여 주고, 계산에는 travelLimit을 쓴다.
+  const travelLimit =
+    maxTravelMinutes === UNLIMITED_TRAVEL
+      ? UNLIMITED_TRAVEL_LIMIT_MINUTES
+      : maxTravelMinutes;
   const [planDate, setPlanDate] = useState("");
   const [themeNote, setThemeNote] = useState("");
   const [startHour, setStartHour] = useState<number | null>(null);
@@ -601,11 +612,11 @@ function CourseBuilderBody({
       buildCourse(
         stages.filter((s) => !isUnsetStage(s)),
         pool,
-        maxTravelMinutes,
+        travelLimit,
         overrides,
         planDate,
       ),
-    [stages, pool, maxTravelMinutes, overrides, planDate],
+    [stages, pool, travelLimit, overrides, planDate],
   );
 
   // 일정·출발 지역·이동시간이 바뀔 때마다 필요한 장소 후보(직전 장소 주변)를 미리 가져온다.
@@ -614,7 +625,7 @@ function CourseBuilderBody({
     void loadLivePlacesForCourse({
       stages: stages.filter((s) => !isUnsetStage(s)),
       starts: regions,
-      maxTravelMinutes,
+      maxTravelMinutes: travelLimit,
       overrides,
       planDate,
       samples: includesSampleRegion(regions) ? places : [],
@@ -624,7 +635,7 @@ function CourseBuilderBody({
     hydrated,
     stages,
     regions,
-    maxTravelMinutes,
+    travelLimit,
     overrides,
     planDate,
   ]);
@@ -632,12 +643,33 @@ function CourseBuilderBody({
   function addRecommendStage(
     category: PlaceCategory,
     subCategory: string | undefined,
+    note?: string,
   ) {
     setStages((prev) => [
       ...prev,
-      { id: generateId("stage"), kind: "recommend", category, subCategory },
+      {
+        id: generateId("stage"),
+        kind: "recommend",
+        category,
+        subCategory,
+        note,
+      },
     ]);
     setAddSheetOpen(false);
+  }
+
+  /** 사용자가 적은 장소 유형을 AI가 카테고리로 바꿔 준다. 못 알아내거나 AI가 실패하면 null. */
+  async function resolveTypedStage(
+    typeNote: string,
+  ): Promise<{ category: PlaceCategory; subCategory?: string } | null> {
+    try {
+      const data = await postRecommend<{
+        stage?: { category: PlaceCategory; subCategory?: string } | null;
+      }>({ mode: "stageType", typeNote, regionNames, allCategories });
+      return data.stage ?? null;
+    } catch {
+      return null;
+    }
   }
 
   function addUnsetDesignatedStage() {
@@ -820,7 +852,7 @@ function CourseBuilderBody({
         await loadLivePlacesForCourse({
           stages: filled.filter((s) => !isUnsetStage(s)),
           starts: regions,
-          maxTravelMinutes,
+          maxTravelMinutes: travelLimit,
           overrides,
           planDate,
           samples: includesSampleRegion(regions) ? places : [],
@@ -828,7 +860,7 @@ function CourseBuilderBody({
         const baseline = buildCourse(
           filled.filter((s) => !isUnsetStage(s)),
           buildPool(regions),
-          maxTravelMinutes,
+          travelLimit,
           overrides,
           planDate,
         );
@@ -937,7 +969,7 @@ function CourseBuilderBody({
         await loadLivePlacesForCourse({
           stages: working,
           starts: regions,
-          maxTravelMinutes,
+          maxTravelMinutes: travelLimit,
           overrides: {},
           planDate,
           samples: includesSampleRegion(regions) ? places : [],
@@ -945,7 +977,7 @@ function CourseBuilderBody({
         const baseline = buildCourse(
           working,
           buildPool(regions),
-          maxTravelMinutes,
+          travelLimit,
           {},
           planDate,
         );
@@ -1112,6 +1144,7 @@ function CourseBuilderBody({
           canAddMore={stages.length < MAX_STAGES}
           onClose={() => setAddSheetOpen(false)}
           onAddRecommend={addRecommendStage}
+          onResolveTyped={resolveTypedStage}
           onAddUnsetDesignated={addUnsetDesignatedStage}
           onStartDesignated={() => setDesignatedEditTarget("new")}
         />
@@ -1122,7 +1155,8 @@ function CourseBuilderBody({
           title="단계 변경"
           canAddMore
           onClose={() => setChangeStageTarget(null)}
-          onAddRecommend={(category, subCategory) => {
+          onResolveTyped={resolveTypedStage}
+          onAddRecommend={(category, subCategory, note) => {
             setStages((prev) =>
               prev.map((s) =>
                 s.id === changeStageTarget
@@ -1131,6 +1165,7 @@ function CourseBuilderBody({
                       kind: "recommend" as const,
                       category,
                       subCategory,
+                      note,
                       isOrigin: s.isOrigin,
                     }
                   : s,
@@ -1232,6 +1267,10 @@ function InputView({
   const [askReset, setAskReset] = useState(false);
   const [timePicker, setTimePicker] = useState<"start" | "end" | null>(null);
   const hasNote = themeNote.trim().length > 0;
+  const travelText =
+    maxTravelMinutes === UNLIMITED_TRAVEL
+      ? "상관 없음"
+      : `${maxTravelMinutes}분`;
 
   // 단계가 없으면 AI가 단계부터 짜 주고, 있으면 그 단계로 코스를 만든다.
   const origin = stages.find((s) => s.isOrigin);
@@ -1455,10 +1494,10 @@ function InputView({
         <button
           type="button"
           onClick={() => setTravelPickerOpen(true)}
-          aria-label={`구간별 최대 이동시간 ${maxTravelMinutes}분, 눌러서 바꾸기`}
+          aria-label={`구간별 최대 이동시간 ${travelText}, 눌러서 바꾸기`}
           className="flex h-11 items-center gap-1 rounded-lg border border-zinc-300 px-4 text-base font-semibold text-black dark:border-zinc-700 dark:text-white"
         >
-          {maxTravelMinutes}분 <span aria-hidden>▾</span>
+          {travelText} <span aria-hidden>▾</span>
         </button>
       </section>
 
@@ -1466,7 +1505,10 @@ function InputView({
         <ScrollPickerSheet
           title="구간별 최대 이동시간"
           testId="travel-picker"
-          options={TRAVEL_OPTIONS.map((m) => ({ value: m, label: `${m}분` }))}
+          options={[
+            ...TRAVEL_OPTIONS.map((m) => ({ value: m, label: `${m}분` })),
+            { value: UNLIMITED_TRAVEL, label: "상관 없음" },
+          ]}
           value={maxTravelMinutes}
           onConfirm={(minutes) => {
             onSetMaxTravelMinutes(minutes);
@@ -1624,8 +1666,9 @@ const TRAVEL_OPTIONS = Array.from(
   (_, i) => MIN_TRAVEL_MINUTES + i * TRAVEL_MINUTES_STEP,
 );
 
-/** 예전에 1분 단위로 저장된 값을 가장 가까운 5분 단위로 맞춘다. */
+/** 예전에 1분 단위로 저장된 값을 가장 가까운 5분 단위로 맞춘다("상관 없음"은 그대로). */
 function snapTravelMinutes(minutes: number): number {
+  if (minutes === UNLIMITED_TRAVEL) return UNLIMITED_TRAVEL;
   const snapped =
     Math.round(minutes / TRAVEL_MINUTES_STEP) * TRAVEL_MINUTES_STEP;
   return Math.min(Math.max(snapped, MIN_TRAVEL_MINUTES), MAX_TRAVEL_MINUTES);
@@ -1931,12 +1974,17 @@ function StageRow({
               출발지
             </span>
           )}
-          <span className="text-base font-medium text-black dark:text-white">
+          <span className="flex flex-col text-base font-medium text-black dark:text-white">
             {stage.kind === "recommend"
               ? `${stage.category}${stage.subCategory ? ` · ${stage.subCategory}` : ""}`
               : isUnsetStage(stage)
                 ? "상관없음"
                 : stage.place.name}
+            {stage.kind === "recommend" && stage.note && (
+              <span className="text-xs font-normal text-zinc-500 dark:text-zinc-400">
+                {stage.note}
+              </span>
+            )}
           </span>
         </div>
 
@@ -1982,6 +2030,7 @@ function AddStageSheet({
   canAddMore,
   onClose,
   onAddRecommend,
+  onResolveTyped,
   onStartDesignated,
   onAddUnsetDesignated,
   title = "단계 추가",
@@ -1991,20 +2040,29 @@ function AddStageSheet({
   onAddRecommend: (
     category: PlaceCategory,
     subCategory: string | undefined,
+    note?: string,
   ) => void;
+  /** 적은 장소 유형을 AI가 카테고리로 바꿔 준다(못 알아내면 null). */
+  onResolveTyped: (
+    typeNote: string,
+  ) => Promise<{ category: PlaceCategory; subCategory?: string } | null>;
   onStartDesignated: () => void;
   onAddUnsetDesignated: () => void;
   title?: string;
 }) {
-  // 카테고리를 고르면, 세부 카테고리가 있는 항목(맛집·카페)만 한 번 더 고르고 나머지는 바로 추가한다.
-  const [category, setCategory] = useState<PlaceCategory | null>(null);
+  const [typeNote, setTypeNote] = useState("");
+  const [resolving, setResolving] = useState(false);
+  const [typeError, setTypeError] = useState(false);
+  const note = typeNote.trim();
 
-  function pickCategory(c: PlaceCategory) {
-    if (SUB_CATEGORIES[c].length > 0) {
-      setCategory(c);
-    } else {
-      onAddRecommend(c, undefined);
-    }
+  async function addTyped() {
+    if (!note || resolving) return;
+    setResolving(true);
+    setTypeError(false);
+    const found = await onResolveTyped(note);
+    setResolving(false);
+    if (found) onAddRecommend(found.category, found.subCategory, note);
+    else setTypeError(true);
   }
 
   return (
@@ -2012,7 +2070,7 @@ function AddStageSheet({
       <div className="mx-2 flex max-h-[70vh] w-full max-w-md flex-col gap-4 overflow-y-auto rounded-2xl bg-white p-4 dark:bg-zinc-900">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-bold text-black dark:text-white">
-            {category ? `${category} 세부 카테고리` : title}
+            {title}
           </h2>
           <button
             type="button"
@@ -2030,7 +2088,7 @@ function AddStageSheet({
           </p>
         )}
 
-        {canAddMore && category === null && (
+        {canAddMore && (
           <div className="flex flex-col gap-3">
             <button
               type="button"
@@ -2046,51 +2104,57 @@ function AddStageSheet({
             >
               상관없음
             </button>
-            {
-              <div className="grid grid-cols-2 gap-2">
-                {CATEGORIES.map((c) => (
-                  <button
-                    key={c}
-                    type="button"
-                    onClick={() => pickCategory(c)}
-                    className="flex h-14 items-center justify-center rounded-xl border border-zinc-300 text-base font-medium text-black dark:border-zinc-700 dark:text-white"
-                  >
-                    {c}
-                  </button>
-                ))}
-              </div>
-            }
-          </div>
-        )}
-
-        {canAddMore && category !== null && (
-          <div className="flex flex-col gap-2">
-            <button
-              type="button"
-              onClick={() => onAddRecommend(category, undefined)}
-              className="h-12 w-full rounded-xl bg-black text-base font-semibold text-white dark:bg-white dark:text-black"
-            >
-              상관없음
-            </button>
             <div className="grid grid-cols-2 gap-2">
-              {SUB_CATEGORIES[category].map((sub) => (
+              {CATEGORIES.map((c) => (
                 <button
-                  key={sub}
+                  key={c}
                   type="button"
-                  onClick={() => onAddRecommend(category, sub)}
-                  className="h-12 rounded-xl border border-zinc-300 text-base text-black dark:border-zinc-700 dark:text-white"
+                  onClick={() => onAddRecommend(c, undefined)}
+                  className="flex h-14 items-center justify-center rounded-xl border border-zinc-300 text-base font-medium text-black dark:border-zinc-700 dark:text-white"
                 >
-                  {sub}
+                  {c}
                 </button>
               ))}
             </div>
-            <button
-              type="button"
-              onClick={() => setCategory(null)}
-              className="h-11 w-full text-sm text-zinc-500 dark:text-zinc-400"
-            >
-              ← 다른 카테고리 고르기
-            </button>
+            <div className="flex flex-col gap-2 border-t border-zinc-200 pt-3 dark:border-zinc-700">
+              <label
+                htmlFor="stage-type-note"
+                className="text-sm font-medium text-zinc-600 dark:text-zinc-400"
+              >
+                가고 싶은 장소 유형을 적어 보세요
+              </label>
+              <div className="flex gap-2">
+                <input
+                  id="stage-type-note"
+                  type="text"
+                  value={typeNote}
+                  maxLength={MAX_STAGE_TYPE_NOTE_LENGTH}
+                  onChange={(e) => {
+                    setTypeNote(e.target.value);
+                    setTypeError(false);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") void addTyped();
+                  }}
+                  placeholder="예: 조용한 북카페, 야경 보이는 술집"
+                  className="h-12 min-w-0 flex-1 rounded-xl border border-zinc-300 bg-white px-3 text-base text-black dark:border-zinc-700 dark:bg-zinc-800 dark:text-white"
+                />
+                <button
+                  type="button"
+                  onClick={() => void addTyped()}
+                  disabled={!note || resolving}
+                  className="h-12 shrink-0 rounded-xl bg-black px-4 text-base font-semibold text-white disabled:opacity-40 dark:bg-white dark:text-black"
+                >
+                  {resolving ? "찾는 중…" : "AI로 추가"}
+                </button>
+              </div>
+              {typeError && (
+                <p className="text-sm text-red-600 dark:text-red-400">
+                  AI가 장소 유형을 알아내지 못했어요. 다르게 적거나 위
+                  카테고리를 골라 주세요.
+                </p>
+              )}
+            </div>
           </div>
         )}
       </div>

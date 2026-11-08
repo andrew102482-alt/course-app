@@ -4,6 +4,9 @@ import {
   buildFillPrompt,
   buildPlanPrompt,
   buildPrompt,
+  buildStageTypePrompt,
+  MAX_STAGE_TYPE_NOTE_LENGTH,
+  parseStageType,
   countFillSlots,
   parseFill,
   parsePicks,
@@ -11,6 +14,7 @@ import {
   type AiFillRequest,
   type AiPlanRequest,
   type AiRecommendRequest,
+  type AiStageTypeRequest,
 } from "@/lib/aiRecommend";
 
 // API 키는 서버(이 파일)에서만 읽는다. 브라우저로 내려가지 않는다.
@@ -93,6 +97,18 @@ function isValidPlanRequest(body: unknown): body is AiPlanRequest {
     validRegionNames(b.regionNames) &&
     typeof b.themeNote === "string" &&
     b.themeNote.length <= 500
+  );
+}
+
+function isValidStageTypeRequest(body: unknown): body is AiStageTypeRequest {
+  if (!body || typeof body !== "object") return false;
+  const b = body as Partial<AiStageTypeRequest>;
+  return (
+    b.mode === "stageType" &&
+    validRegionNames(b.regionNames) &&
+    typeof b.typeNote === "string" &&
+    b.typeNote.trim().length > 0 &&
+    b.typeNote.length <= MAX_STAGE_TYPE_NOTE_LENGTH
   );
 }
 
@@ -203,6 +219,19 @@ export async function POST(request: Request) {
       }
       return NextResponse.json({
         stages: parsePlan(text, undefined, body.allCategories === true),
+      });
+    }
+    if (isValidStageTypeRequest(body)) {
+      const text = await askModel(
+        apiKey,
+        buildStageTypePrompt(body),
+        PLAN_SCHEMA,
+      );
+      if (text === null) {
+        return NextResponse.json({ error: "upstream" }, { status: 502 });
+      }
+      return NextResponse.json({
+        stage: parseStageType(text, body.allCategories === true),
       });
     }
     if (isValidFillRequest(body)) {
