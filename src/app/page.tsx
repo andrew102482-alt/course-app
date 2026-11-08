@@ -2141,37 +2141,47 @@ function RegionSheet({
           type="search"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={(e) => {
+            // 엔터를 누르면 첫 번째 검색 결과로 바로 적용한다.
+            if (e.key === "Enter" && q && dongs.length > 0) {
+              onApply({ areaId: dongs[0].areaId, dongId: dongs[0].id });
+            }
+          }}
           placeholder="동네 이름 검색 (전국, 예: 해운대)"
           aria-label="동네 이름 검색"
           className="h-11 w-full rounded-xl border border-zinc-300 bg-white px-3 text-base text-black dark:border-zinc-700 dark:bg-zinc-800 dark:text-white"
         />
-        <div className="flex flex-wrap gap-1.5" aria-label="시·도">
-          {AREAS.map((a) => {
-            const on = a.id === areaId;
-            return (
-              <button
-                key={a.id}
-                type="button"
-                onClick={() => {
-                  setAreaId(a.id);
-                  setDongId(null);
-                  setQuery("");
-                }}
-                aria-pressed={on}
-                className={`h-10 rounded-full border px-4 text-sm font-medium ${
-                  on
-                    ? "border-black bg-black text-white dark:border-white dark:bg-white dark:text-black"
-                    : "border-zinc-300 text-zinc-700 dark:border-zinc-700 dark:text-zinc-200"
-                }`}
-              >
-                {a.name}
-              </button>
-            );
-          })}
-        </div>
+        {!q && (
+          <div className="flex flex-wrap gap-1.5" aria-label="시·도">
+            {AREAS.map((a) => {
+              const on = a.id === areaId;
+              return (
+                <button
+                  key={a.id}
+                  type="button"
+                  onClick={() => {
+                    setAreaId(a.id);
+                    setDongId(null);
+                    setQuery("");
+                  }}
+                  aria-pressed={on}
+                  className={`h-10 rounded-full border px-4 text-sm font-medium ${
+                    on
+                      ? "border-black bg-black text-white dark:border-white dark:bg-white dark:text-black"
+                      : "border-zinc-300 text-zinc-700 dark:border-zinc-700 dark:text-zinc-200"
+                  }`}
+                >
+                  {a.name}
+                </button>
+              );
+            })}
+          </div>
+        )}
         <div className="flex items-center justify-between gap-2">
           <span className="text-sm font-medium text-zinc-600 dark:text-zinc-400">
-            동네 (고르지 않아도 돼요)
+            {q
+              ? "검색 결과 (누르면 바로 적용돼요)"
+              : "동네 (고르지 않아도 돼요)"}
           </span>
           {dongId && (
             <button
@@ -2183,7 +2193,7 @@ function RegionSheet({
             </button>
           )}
         </div>
-        <div className="flex min-h-0 flex-1 flex-wrap content-start gap-1.5 overflow-y-auto">
+        <div className="flex min-h-[8rem] flex-1 flex-wrap content-start gap-1.5 overflow-y-auto">
           {dongs.length === 0 && (
             <p className="text-sm text-zinc-500 dark:text-zinc-400">
               맞는 동네가 없어요.
@@ -2196,7 +2206,11 @@ function RegionSheet({
                 key={d.id}
                 type="button"
                 onClick={() => {
-                  setAreaId(d.areaId);
+                  // 검색 결과를 누르면 시·도까지 함께 정해서 바로 출발 지역으로 적용한다.
+                  if (q) {
+                    onApply({ areaId: d.areaId, dongId: d.id });
+                    return;
+                  }
                   setDongId(on ? null : d.id);
                 }}
                 aria-pressed={on}
