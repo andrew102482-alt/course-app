@@ -60,26 +60,56 @@ function parseRequest(
 
 type BlogAuth = { hub: boolean; keyId: string; key: string };
 
+type BlogItems = { title?: unknown; description?: unknown }[];
+
+/** 한 가지 방식(hub=NAVER API HUB / 아니면 개발자센터 openapi)으로 블로그 검색. 실패하면 상태 코드만 돌려준다. */
+async function searchBlog(
+  hub: boolean,
+  auth: BlogAuth,
+  query: string,
+): Promise<{ status: number; items: BlogItems }> {
+  const url = `${hub ? HUB_URL : OPEN_URL}?query=${encodeURIComponent(query)}&display=3`;
+  const res = await fetch(url, {
+    headers: hub
+      ? {
+          "X-NCP-APIGW-API-KEY-ID": auth.keyId,
+          "X-NCP-APIGW-API-KEY": auth.key,
+        }
+      : {
+          "X-Naver-Client-Id": auth.keyId,
+          "X-Naver-Client-Secret": auth.key,
+        },
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!res.ok) {
+    // 원인 파악용: 네이버가 돌려준 오류 문구만 서버 로그에 남긴다(키는 들어 있지 않다).
+    const text = await res.text().catch(() => "");
+    console.warn(`[blurb] naver says: ${text.slice(0, 200)}`);
+    return { status: res.status, items: [] };
+  }
+  const data = (await res.json()) as { items?: BlogItems };
+  return { status: 200, items: data.items ?? [] };
+}
+
+// 개발자센터 방식이 거절(401·403)되면 같은 키로 API HUB 방식을 시도하고, 통한 방식을 기억해 둔다.
+let workingHub: boolean | null = null;
+
 async function blogSnippets(auth: BlogAuth, query: string): Promise<string[]> {
   try {
-    const url = `${auth.hub ? HUB_URL : OPEN_URL}?query=${encodeURIComponent(query)}&display=3`;
-    const res = await fetch(url, {
-      headers: auth.hub
-        ? {
-            "X-NCP-APIGW-API-KEY-ID": auth.keyId,
-            "X-NCP-APIGW-API-KEY": auth.key,
-          }
-        : {
-            "X-Naver-Client-Id": auth.keyId,
-            "X-Naver-Client-Secret": auth.key,
-          },
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (!res.ok) return [];
-    const data = (await res.json()) as {
-      items?: { title?: unknown; description?: unknown }[];
-    };
-    return (data.items ?? []).map(snippetOf).filter((s) => s.length > 3);
+    const order =
+      workingHub !== null ? [workingHub] : auth.hub ? [true] : [false, true];
+    for (const hub of order) {
+      const { status, items } = await searchBlog(hub, auth, query);
+      if (status === 200) {
+        workingHub = hub;
+        return items.map(snippetOf).filter((s) => s.length > 3);
+      }
+      console.warn(
+        `[blurb] blog search failed: ${status} (${hub ? "hub" : "openapi"})`,
+      );
+      if (status !== 401 && status !== 403) break;
+    }
+    return [];
   } catch {
     return [];
   }
@@ -108,7 +138,10 @@ async function askLlm(apiKey: string, user: string): Promise<string> {
       }),
       signal: AbortSignal.timeout(40_000),
     });
-    if (!res.ok) return "";
+    if (!res.ok) {
+      console.warn(`[blurb] llm failed: ${res.status}`);
+      return "";
+    }
     const data = (await res.json()) as {
       choices?: { message?: { content?: string } }[];
     };
