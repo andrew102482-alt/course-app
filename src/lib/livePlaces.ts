@@ -1,16 +1,19 @@
 import type { Place, PlaceCategory } from "../data/places.ts";
+import { buildCourse, type Stage, type StageOverrides } from "./course.ts";
 import type { Region } from "./regions.ts";
-import type { Stage } from "./course.ts";
 
 /**
- * 예시 데이터(종로)가 없는 지역의 추천 후보. 지역 × 카테고리마다 서버 통로(/api/places/nearby,
- * TMAP 장소 검색)에서 한 번 가져와 기억해 둔다. 평점·영업시간은 받을 수 없어 비어 있다.
+ * 예시 데이터(종로) 밖의 추천 후보. 서버 통로(/api/places/nearby, TMAP 장소 검색)에서
+ * "기준 지점 주변 × 카테고리"마다 한 번 가져와 기억해 둔다. 평점·영업시간은 받을 수 없어 비어 있다.
+ * 기준 지점은 첫 장소는 출발 지역, 그다음부터는 직전에 고른 장소다(그래서 코스가 출발 지역 밖으로 이어질 수 있다).
  */
 const SAMPLE_REGION_ID = "jongno";
 const cache = new Map<string, Place[]>();
 const inflight = new Map<string, Promise<void>>();
+const GRID = 0.005; // 약 550m. 비슷한 기준 지점은 같은 검색 결과를 같이 쓴다.
+const METERS_PER_MINUTE = 67;
+const DETOUR = 1.3;
 
-// 후보를 새로 가져올 때마다 올라가는 번호. 화면이 구독해서 코스를 다시 계산한다.
 let version = 0;
 const listeners = new Set<() => void>();
 export function subscribeLivePlaces(listener: () => void): () => void {
@@ -24,7 +27,13 @@ function markChanged() {
   version++;
   listeners.forEach((l) => l());
 }
+/** 지금 장소를 가져오는 중이면 true. */
+export function isLoadingLive(): boolean {
+  return inflight.size > 0;
+}
 
+type Point = { lat: number; lng: number };
+type Anchor = Point & { radius: number };
 type ApiPlace = {
   id: string;
   name: string;
@@ -36,8 +45,8 @@ type ApiPlace = {
   lng: number;
 };
 
-function keyOf(region: Region, category: string, sub?: string) {
-  return `${region.id}|${category}|${sub ?? ""}`;
+function keyOf(a: Point, category: string, sub?: string) {
+  return `${Math.round(a.lat / GRID)},${Math.round(a.lng / GRID)}|${category}|${sub ?? ""}`;
 }
 
 function toPlace(p: ApiPlace): Place {
@@ -60,15 +69,15 @@ function toPlace(p: ApiPlace): Place {
   };
 }
 
-function fetchOne(region: Region, category: string, sub?: string) {
-  const key = keyOf(region, category, sub);
+function fetchOne(a: Anchor, category: string, sub?: string) {
+  const key = keyOf(a, category, sub);
   if (cache.has(key)) return Promise.resolve();
   const running = inflight.get(key);
   if (running) return running;
   const params = new URLSearchParams({
-    lat: String(region.lat),
-    lng: String(region.lng),
-    r: String(region.radius),
+    lat: String(a.lat),
+    lng: String(a.lng),
+    r: String(Math.round(a.radius)),
     category,
   });
   if (sub) params.set("sub", sub);
@@ -76,89 +85,90 @@ function fetchOne(region: Region, category: string, sub?: string) {
     .then((r) => (r.ok ? r.json() : { results: [] }))
     .then((d: { results?: ApiPlace[] }) => {
       cache.set(key, (d.results ?? []).map(toPlace));
-      markChanged();
     })
     .catch(() => {
       cache.set(key, []);
-      markChanged();
     })
-    .finally(() => inflight.delete(key));
+    .finally(() => {
+      inflight.delete(key);
+      markChanged();
+    });
   inflight.set(key, job);
+  markChanged();
   return job;
 }
 
-/** 이 일정에 필요한 (지역, 카테고리) 후보를 모두 가져온다. 새로 가져온 게 있으면 true. */
-export async function loadLivePlaces(
-  regions: Region[],
-  stages: Stage[],
-): Promise<boolean> {
-  const jobs: Promise<void>[] = [];
-  let fresh = false;
-  for (const region of regions) {
-    if (region.id === SAMPLE_REGION_ID) continue;
-    const seen = new Set<string>();
-    for (const s of stages) {
-      if (s.kind !== "recommend") continue;
-      const k = keyOf(region, s.category, s.subCategory);
-      if (seen.has(k)) continue;
-      seen.add(k);
-      if (!cache.has(k)) fresh = true;
-      jobs.push(fetchOne(region, s.category, s.subCategory));
-    }
-  }
-  await Promise.all(jobs);
-  return fresh;
-}
-
-function distance(a: { lat: number; lng: number }, b: Region): number {
-  const rad = (d: number) => (d * Math.PI) / 180;
-  const dLat = rad(b.lat - a.lat);
-  const dLng = rad(b.lng - a.lng);
-  const h =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.sin(dLng / 2) ** 2;
-  return 2 * 6371000 * Math.asin(Math.sqrt(h));
-}
-
-/** 지금까지 가져온 실제 장소 후보(지역 반경 안, 중복 제거). */
-export function getLivePlaces(regions: Region[]): Place[] {
+/** 지금까지 가져온 실제 장소 후보(같은 장소·같은 세부 카테고리는 하나만). */
+export function getLivePlaces(): Place[] {
   const out: Place[] = [];
   const seen = new Set<string>();
-  for (const region of regions) {
-    if (region.id === SAMPLE_REGION_ID) continue;
-    for (const [key, list] of cache) {
-      if (!key.startsWith(`${region.id}|`)) continue;
-      for (const p of list) {
-        // 같은 장소가 다른 세부 카테고리 검색에서 또 나오면 처음 것만 쓴다.
-        const dedupeKey = `${p.id}|${p.category}|${p.subCategory ?? ""}`;
-        if (seen.has(dedupeKey) || distance(p, region) > region.radius * 1.3)
-          continue;
-        seen.add(dedupeKey);
-        out.push(p);
-      }
+  for (const list of cache.values()) {
+    for (const p of list) {
+      const k = `${p.id}|${p.category}|${p.subCategory ?? ""}`;
+      if (seen.has(k)) continue;
+      seen.add(k);
+      out.push(p);
     }
   }
   return out;
 }
 
-/** 이 일정에 쓸 후보 전체: 종로를 골랐으면 예시 데이터 + 실제 장소 후보. */
 export function includesSampleRegion(regions: Region[]): boolean {
   return regions.some((r) => r.id === SAMPLE_REGION_ID);
 }
 
-/** 아직 가져오지 못한 (지역, 카테고리) 후보 수. 0보다 크면 "장소를 찾는 중"으로 본다. */
-export function pendingLiveCount(regions: Region[], stages: Stage[]): number {
-  let count = 0;
-  for (const region of regions) {
-    if (region.id === SAMPLE_REGION_ID) continue;
-    const seen = new Set<string>();
-    for (const s of stages) {
-      if (s.kind !== "recommend") continue;
-      const k = keyOf(region, s.category, s.subCategory);
-      if (seen.has(k)) continue;
-      seen.add(k);
-      if (!cache.has(k)) count++;
+/**
+ * 이 일정의 추천 단계마다 "기준 지점 주변" 후보를 가져온다.
+ * 기준 지점은 직전 장소라서, 장소를 하나 정할 때마다 다음 단계 후보를 더 가져와야 한다.
+ * 그래서 코스를 계산 → 필요한 후보를 가져옴 → 다시 계산을 더 가져올 게 없을 때까지 되풀이한다.
+ */
+export async function loadLivePlacesForCourse(opts: {
+  stages: Stage[]; // 장소를 안 정한("상관없음") 칸은 뺀 일정
+  starts: Region[];
+  maxTravelMinutes: number;
+  overrides: StageOverrides;
+  planDate?: string;
+  samples: Place[];
+}): Promise<void> {
+  const { stages, starts, maxTravelMinutes, overrides, planDate, samples } =
+    opts;
+  if (!stages.some((s) => s.kind === "recommend")) return;
+  const walkRadius = Math.min(
+    3500,
+    Math.max(
+      1000,
+      ((maxTravelMinutes * METERS_PER_MINUTE) / DETOUR) * 1.15 + 600,
+    ),
+  );
+
+  for (let pass = 0; pass <= stages.length + 1; pass++) {
+    const result = buildCourse(
+      stages,
+      [...samples, ...getLivePlaces()],
+      maxTravelMinutes,
+      overrides,
+      planDate,
+    );
+    const jobs: Promise<void>[] = [];
+    let previous: Point | null = null;
+    for (const r of result.stages) {
+      if (r.kind === "recommend") {
+        const anchors: Anchor[] = previous
+          ? [{ ...previous, radius: walkRadius }]
+          : starts.map((s) => ({
+              lat: s.lat,
+              lng: s.lng,
+              radius: Math.max(s.radius, walkRadius),
+            }));
+        for (const a of anchors) {
+          const k = keyOf(a, r.stage.category, r.stage.subCategory);
+          if (!cache.has(k))
+            jobs.push(fetchOne(a, r.stage.category, r.stage.subCategory));
+        }
+      }
+      if (r.selected) previous = r.selected;
     }
+    if (jobs.length === 0) return;
+    await Promise.all(jobs);
   }
-  return count;
 }

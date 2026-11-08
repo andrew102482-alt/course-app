@@ -1,47 +1,59 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  DEFAULT_REGION,
-  MAX_REGIONS,
-  REGIONS,
-  isWithinRegions,
-  regionsLabel,
-  resolveRegions,
+  AREAS,
+  DEFAULT_SELECTION,
+  DONGS,
+  dongsOf,
+  regionLabel,
+  resolveSelection,
+  selectionRegions,
 } from "./regions.ts";
 import { keywordsFor } from "./liveSearch.ts";
 
-test("resolveRegions: 알 수 없는 id는 버리고, 비면 종로", () => {
-  assert.deepEqual(resolveRegions(["nope"]), [DEFAULT_REGION]);
-  assert.deepEqual(resolveRegions(undefined), [DEFAULT_REGION]);
-  assert.deepEqual(
-    resolveRegions(["hongdae", "nope", "hongdae"]).map((r) => r.id),
-    ["hongdae"],
-  );
+test("resolveSelection: 모르는 값은 서울·종로, 예전 형식(id 목록)도 읽는다", () => {
+  assert.deepEqual(resolveSelection(undefined), DEFAULT_SELECTION);
+  assert.deepEqual(resolveSelection({ areaId: "nope" }), DEFAULT_SELECTION);
+  assert.deepEqual(resolveSelection(["busan-haeundae", "jongno"]), {
+    areaId: "busan",
+    dongId: "busan-haeundae",
+  });
 });
 
-test("resolveRegions: 최대 개수까지만", () => {
-  const ids = REGIONS.slice(0, MAX_REGIONS + 2).map((r) => r.id);
-  assert.equal(resolveRegions(ids).length, MAX_REGIONS);
+test("resolveSelection: 시·도만 골라도(동 없이) 된다", () => {
+  assert.deepEqual(resolveSelection({ areaId: "jeju", dongId: null }), {
+    areaId: "jeju",
+    dongId: null,
+  });
 });
 
-test("isWithinRegions: 고른 지역 반경 안/밖", () => {
-  const haeundae = resolveRegions(["busan-haeundae"]);
+test("selectionRegions: 동을 고르면 그 동, 없으면 시·도 대표 중심", () => {
+  const dong = selectionRegions({ areaId: "busan", dongId: "busan-haeundae" });
+  assert.equal(dong.length, 1);
+  assert.equal(dong[0].name, "해운대");
+  const area = selectionRegions({ areaId: "busan", dongId: null });
+  assert.equal(area[0].name, "부산");
+  // 다른 시·도의 동을 넘기면 시·도 중심으로 대신한다.
   assert.equal(
-    isWithinRegions({ lat: 35.1631, lng: 129.1639 }, haeundae),
-    true,
+    selectionRegions({ areaId: "seoul", dongId: "busan-haeundae" })[0].name,
+    "서울",
   );
-  assert.equal(
-    isWithinRegions({ lat: 37.5759, lng: 126.9825 }, haeundae),
-    false,
-  );
-  const both = resolveRegions(["busan-haeundae", "jongno"]);
-  assert.equal(isWithinRegions({ lat: 37.5759, lng: 126.9825 }, both), true);
 });
 
-test("regionsLabel: 길면 줄인다", () => {
-  const r = resolveRegions(["jongno", "hongdae", "seongsu"]);
-  assert.equal(regionsLabel(r.slice(0, 2)), "종로 · 홍대·합정");
-  assert.equal(regionsLabel(r), "종로 외 2곳");
+test("regionLabel: 동은 '시·도 · 동', 시·도만이면 시·도", () => {
+  assert.equal(
+    regionLabel(selectionRegions({ areaId: "seoul", dongId: "jongno" })[0]),
+    "서울 · 종로",
+  );
+  assert.equal(
+    regionLabel(selectionRegions({ areaId: "seoul", dongId: null })[0]),
+    "서울",
+  );
+});
+
+test("모든 시·도에 동이 있고, 동 id는 겹치지 않는다", () => {
+  for (const a of AREAS) assert.ok(dongsOf(a.id).length > 0, a.name);
+  assert.equal(new Set(DONGS.map((d) => d.id)).size, DONGS.length);
 });
 
 test("keywordsFor: 세부 카테고리별 검색어, 없으면 대분류 기본값", () => {

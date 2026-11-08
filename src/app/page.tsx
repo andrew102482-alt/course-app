@@ -46,21 +46,22 @@ import { computeProgress, formatMeters, turnIcon } from "@/lib/guidance";
 import { buildAiRequest, type AiPicks } from "@/lib/aiRecommend";
 import { saveCourse, toSavedCourse } from "@/lib/savedCourses";
 import {
+  AREAS,
   DEFAULT_REGION,
-  DEFAULT_REGION_ID,
-  MAX_REGIONS,
-  REGIONS,
-  isWithinRegions,
-  regionsLabel,
-  resolveRegions,
+  DEFAULT_SELECTION,
+  dongsOf,
+  regionLabel,
+  resolveSelection,
+  selectionRegions,
   type Region,
+  type RegionSelection,
 } from "@/lib/regions";
 import {
   getLivePlaces,
   includesSampleRegion,
+  isLoadingLive,
   livePlacesVersion,
-  loadLivePlaces,
-  pendingLiveCount,
+  loadLivePlacesForCourse,
   subscribeLivePlaces,
 } from "@/lib/livePlaces";
 import { AvatarCustomizer, AvatarFigure } from "./AvatarCustomizer";
@@ -145,10 +146,7 @@ function useRegionContext() {
 
 /** 코스 계산에 쓸 장소 전체: 종로를 골랐으면 예시 데이터, 다른 지역은 TMAP에서 가져온 실제 장소. */
 function buildPool(regions: Region[]): Place[] {
-  return [
-    ...(includesSampleRegion(regions) ? places : []),
-    ...getLivePlaces(regions),
-  ];
+  return [...(includesSampleRegion(regions) ? places : []), ...getLivePlaces()];
 }
 
 /** 이전 버전에서 저장된 카테고리·세부 카테고리 이름을 지금 이름으로 바꾼다. */
@@ -358,25 +356,30 @@ function loadMeetTimes(): { start: number | null; end: number | null } {
 }
 
 function CourseBuilder() {
-  const [regionIds, setRegionIds] = useState<string[]>([DEFAULT_REGION_ID]);
+  const [selection, setSelection] =
+    useState<RegionSelection>(DEFAULT_SELECTION);
   const [regionsLoaded, setRegionsLoaded] = useState(false);
-  const regions = useMemo(() => resolveRegions(regionIds), [regionIds]);
+  const regions = useMemo(() => selectionRegions(selection), [selection]);
   // 장소 후보를 가져올 때마다 올라가서, 가져온 장소로 코스를 다시 계산하게 한다.
   const liveVersion = useSyncExternalStore(
     subscribeLivePlaces,
     livePlacesVersion,
     () => 0,
   );
-  const [stagesForPlaces, setStagesForPlaces] = useState<Stage[]>([]);
+  const loadingPlaces = useSyncExternalStore(
+    subscribeLivePlaces,
+    isLoadingLive,
+    () => false,
+  );
 
   useEffect(() => {
     // 저장된 지역은 브라우저에서만 읽을 수 있어 마운트 후 한 번 읽는다.
     try {
       const raw = window.localStorage.getItem(REGIONS_STORAGE_KEY);
       // eslint-disable-next-line react-hooks/set-state-in-effect
-      if (raw) setRegionIds(resolveRegions(JSON.parse(raw)).map((r) => r.id));
+      if (raw) setSelection(resolveSelection(JSON.parse(raw)));
     } catch {
-      // 못 읽으면 기본 지역(종로)으로 둔다.
+      // 못 읽으면 기본 지역(서울·종로)으로 둔다.
     }
     setRegionsLoaded(true);
   }, []);
@@ -386,37 +389,30 @@ function CourseBuilder() {
     try {
       window.localStorage.setItem(
         REGIONS_STORAGE_KEY,
-        JSON.stringify(regionIds),
+        JSON.stringify(selection),
       );
     } catch {
       // 저장에 실패해도 이번 화면에서는 고른 지역이 유지된다.
     }
-  }, [regionIds, regionsLoaded]);
-
-  // 고른 지역 × 일정의 카테고리에 맞는 실제 장소 후보를 미리 가져온다.
-  useEffect(() => {
-    if (!regionsLoaded) return;
-    void loadLivePlaces(regions, stagesForPlaces);
-  }, [regions, stagesForPlaces, regionsLoaded]);
+  }, [selection, regionsLoaded]);
 
   const regionValue = useMemo<RegionContextValue>(
     () => ({
       regions,
       center: { lat: regions[0].lat, lng: regions[0].lng },
-      loadingPlaces: pendingLiveCount(regions, stagesForPlaces) > 0,
+      loadingPlaces,
     }),
-    // liveVersion: 후보를 가져오면 "찾는 중" 표시를 다시 계산한다.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [regions, stagesForPlaces, liveVersion],
+    [regions, loadingPlaces],
   );
 
   return (
     <RegionContext.Provider value={regionValue}>
       <CourseBuilderBody
         regions={regions}
+        selection={selection}
+        regionsLoaded={regionsLoaded}
         liveVersion={liveVersion}
-        onChangeRegions={(next) => setRegionIds(next.map((r) => r.id))}
-        onStagesChange={setStagesForPlaces}
+        onChangeSelection={setSelection}
       />
     </RegionContext.Provider>
   );
@@ -424,20 +420,21 @@ function CourseBuilder() {
 
 function CourseBuilderBody({
   regions,
+  selection,
+  regionsLoaded,
   liveVersion,
-  onChangeRegions,
-  onStagesChange,
+  onChangeSelection,
 }: {
   regions: Region[];
+  selection: RegionSelection;
+  regionsLoaded: boolean;
   liveVersion: number;
-  onChangeRegions: (regions: Region[]) => void;
-  onStagesChange: (stages: Stage[]) => void;
+  onChangeSelection: (selection: RegionSelection) => void;
 }) {
   const [stages, setStages] = useState<Stage[]>([]);
   const [regionSheetOpen, setRegionSheetOpen] = useState(false);
-  const allCategories = !(
-    regions.length === 1 && includesSampleRegion(regions)
-  );
+  // 코스가 출발 지역 밖으로도 이어지므로 모든 카테고리를 후보로 본다.
+  const allCategories = true;
   const regionNames = useMemo(() => regions.map((r) => r.name), [regions]);
   const pool = useMemo(
     () => buildPool(regions),
@@ -445,9 +442,6 @@ function CourseBuilderBody({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [regions, liveVersion],
   );
-  useEffect(() => {
-    onStagesChange(stages);
-  }, [stages, onStagesChange]);
   const [maxTravelMinutes, setMaxTravelMinutes] = useState(
     DEFAULT_TRAVEL_MINUTES,
   );
@@ -607,6 +601,27 @@ function CourseBuilderBody({
       ),
     [stages, pool, maxTravelMinutes, overrides, planDate],
   );
+
+  // 일정·출발 지역·이동시간이 바뀔 때마다 필요한 장소 후보(직전 장소 주변)를 미리 가져온다.
+  useEffect(() => {
+    if (!regionsLoaded || !hydrated) return;
+    void loadLivePlacesForCourse({
+      stages: stages.filter((s) => !isUnsetStage(s)),
+      starts: regions,
+      maxTravelMinutes,
+      overrides,
+      planDate,
+      samples: includesSampleRegion(regions) ? places : [],
+    });
+  }, [
+    regionsLoaded,
+    hydrated,
+    stages,
+    regions,
+    maxTravelMinutes,
+    overrides,
+    planDate,
+  ]);
 
   function addRecommendStage(
     category: PlaceCategory,
@@ -796,7 +811,14 @@ function CourseBuilderBody({
         ),
       );
       try {
-        await loadLivePlaces(regions, filled);
+        await loadLivePlacesForCourse({
+          stages: filled.filter((s) => !isUnsetStage(s)),
+          starts: regions,
+          maxTravelMinutes,
+          overrides,
+          planDate,
+          samples: includesSampleRegion(regions) ? places : [],
+        });
         const baseline = buildCourse(
           filled.filter((s) => !isUnsetStage(s)),
           buildPool(regions),
@@ -906,7 +928,14 @@ function CourseBuilderBody({
       }
 
       try {
-        await loadLivePlaces(regions, working);
+        await loadLivePlacesForCourse({
+          stages: working,
+          starts: regions,
+          maxTravelMinutes,
+          overrides: {},
+          planDate,
+          samples: includesSampleRegion(regions) ? places : [],
+        });
         const baseline = buildCourse(
           working,
           buildPool(regions),
@@ -1062,10 +1091,10 @@ function CourseBuilderBody({
 
       {regionSheetOpen && (
         <RegionSheet
-          selected={regions}
+          selected={selection}
           onClose={() => setRegionSheetOpen(false)}
           onApply={(next) => {
-            onChangeRegions(next);
+            onChangeSelection(next);
             setOverrides({}); // 지역이 바뀌면 추천을 새로 계산한다.
             setRegionSheetOpen(false);
           }}
@@ -1240,15 +1269,15 @@ function InputView({
       <div className="flex gap-3">
         <section className="flex min-w-0 flex-1 flex-col gap-2">
           <label className="text-sm font-medium text-zinc-600 dark:text-zinc-400">
-            지역
+            출발 지역
           </label>
           <button
             type="button"
             onClick={onOpenRegionSheet}
-            aria-label={`지역 선택: ${regionsLabel(regions, 3)}`}
+            aria-label={`출발 지역 선택: ${regionLabel(regions[0])}`}
             className="flex h-12 w-full items-center justify-between gap-2 rounded-xl border border-zinc-300 bg-zinc-50 px-4 text-left text-base text-black dark:border-zinc-700 dark:bg-zinc-900 dark:text-white"
           >
-            <span className="min-w-0 truncate">{regionsLabel(regions)}</span>
+            <span className="min-w-0 truncate">{regionLabel(regions[0])}</span>
             <span aria-hidden className="shrink-0 text-xs text-zinc-500">
               ▾
             </span>
@@ -2063,43 +2092,33 @@ function AddStageSheet({
   );
 }
 
-/** 지역 선택 창. 최대 MAX_REGIONS곳까지 고를 수 있고, "적용"을 눌러야 바뀐다. */
+/** 출발 지역 선택 창. 시·도(큰 단위) 하나를 고르고, 원하면 그 안의 동(작은 단위)도 하나 고른다. "적용"을 눌러야 바뀐다. */
 function RegionSheet({
   selected,
   onClose,
   onApply,
 }: {
-  selected: Region[];
+  selected: RegionSelection;
   onClose: () => void;
-  onApply: (regions: Region[]) => void;
+  onApply: (selection: RegionSelection) => void;
 }) {
-  const [picked, setPicked] = useState<Region[]>(selected);
+  const [areaId, setAreaId] = useState(selected.areaId);
+  const [dongId, setDongId] = useState<string | null>(selected.dongId);
   const [query, setQuery] = useState("");
   const q = query.trim();
-  const visible = REGIONS.filter(
-    (r) => !q || r.name.includes(q) || r.area.includes(q),
-  );
-  const areas = [...new Set(visible.map((r) => r.area))];
-
-  function toggle(region: Region) {
-    setPicked((prev) => {
-      if (prev.some((r) => r.id === region.id)) {
-        return prev.length > 1 ? prev.filter((r) => r.id !== region.id) : prev;
-      }
-      return prev.length >= MAX_REGIONS ? prev : [...prev, region];
-    });
-  }
+  const dongs = dongsOf(areaId).filter((d) => !q || d.name.includes(q));
+  const pickedLabel = regionLabel(selectionRegions({ areaId, dongId })[0]);
 
   return (
     <div className="fixed inset-0 z-30 flex items-end justify-center bg-black/50">
       <div
         role="dialog"
-        aria-label="지역 선택"
+        aria-label="출발 지역 선택"
         className="flex h-[80vh] w-full max-w-md flex-col gap-3 rounded-t-2xl bg-white p-4 dark:bg-zinc-900"
       >
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-bold text-black dark:text-white">
-            지역 선택
+            출발 지역
           </h2>
           <button
             type="button"
@@ -2111,75 +2130,86 @@ function RegionSheet({
           </button>
         </div>
         <p className="text-xs text-zinc-500 dark:text-zinc-400">
-          최대 {MAX_REGIONS}곳까지 고를 수 있어요. 고른 지역 주변에서 지도·장소
-          검색·추천이 돼요.
+          코스를 시작할 지역이에요. 첫 장소는 이 주변에서 찾고, 그다음부터는 앞
+          장소 주변에서 이어 찾아서 코스가 이 지역 밖으로 이어질 수 있어요.
         </p>
-        <div className="flex flex-wrap gap-1.5" aria-label="고른 지역">
-          {picked.map((r) => (
+        <div className="flex flex-wrap gap-1.5" aria-label="시·도">
+          {AREAS.map((a) => {
+            const on = a.id === areaId;
+            return (
+              <button
+                key={a.id}
+                type="button"
+                onClick={() => {
+                  setAreaId(a.id);
+                  setDongId(null);
+                  setQuery("");
+                }}
+                aria-pressed={on}
+                className={`h-10 rounded-full border px-4 text-sm font-medium ${
+                  on
+                    ? "border-black bg-black text-white dark:border-white dark:bg-white dark:text-black"
+                    : "border-zinc-300 text-zinc-700 dark:border-zinc-700 dark:text-zinc-200"
+                }`}
+              >
+                {a.name}
+              </button>
+            );
+          })}
+        </div>
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-sm font-medium text-zinc-600 dark:text-zinc-400">
+            동네 (고르지 않아도 돼요)
+          </span>
+          {dongId && (
             <button
-              key={r.id}
               type="button"
-              onClick={() => toggle(r)}
-              aria-label={`${r.name} 빼기`}
-              className="flex h-8 items-center gap-1 rounded-full bg-black px-3 text-sm font-medium text-white dark:bg-white dark:text-black"
+              onClick={() => setDongId(null)}
+              className="h-8 rounded-lg px-2 text-xs font-medium text-zinc-500 underline"
             >
-              {r.name}
-              <span aria-hidden>✕</span>
+              선택 해제
             </button>
-          ))}
+          )}
         </div>
         <input
           type="search"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="지역 이름 검색 (예: 해운대, 제주)"
-          aria-label="지역 이름 검색"
+          placeholder="동네 이름 검색"
+          aria-label="동네 이름 검색"
           className="h-11 w-full rounded-xl border border-zinc-300 bg-white px-3 text-base text-black dark:border-zinc-700 dark:bg-zinc-800 dark:text-white"
         />
-        <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto">
-          {areas.length === 0 && (
+        <div className="flex min-h-0 flex-1 flex-wrap content-start gap-1.5 overflow-y-auto">
+          {dongs.length === 0 && (
             <p className="text-sm text-zinc-500 dark:text-zinc-400">
-              맞는 지역이 없어요.
+              맞는 동네가 없어요.
             </p>
           )}
-          {areas.map((area) => (
-            <div key={area} className="flex flex-col gap-1.5">
-              <span className="text-xs font-semibold text-zinc-500 dark:text-zinc-400">
-                {area}
-              </span>
-              <div className="flex flex-wrap gap-1.5">
-                {visible
-                  .filter((r) => r.area === area)
-                  .map((r) => {
-                    const on = picked.some((p) => p.id === r.id);
-                    const full = !on && picked.length >= MAX_REGIONS;
-                    return (
-                      <button
-                        key={r.id}
-                        type="button"
-                        onClick={() => toggle(r)}
-                        aria-pressed={on}
-                        disabled={full}
-                        className={`h-10 rounded-full border px-4 text-sm font-medium disabled:opacity-35 ${
-                          on
-                            ? "border-black bg-black text-white dark:border-white dark:bg-white dark:text-black"
-                            : "border-zinc-300 text-zinc-700 dark:border-zinc-700 dark:text-zinc-200"
-                        }`}
-                      >
-                        {r.name}
-                      </button>
-                    );
-                  })}
-              </div>
-            </div>
-          ))}
+          {dongs.map((d) => {
+            const on = d.id === dongId;
+            return (
+              <button
+                key={d.id}
+                type="button"
+                onClick={() => setDongId(on ? null : d.id)}
+                aria-pressed={on}
+                className={`h-10 rounded-full border px-4 text-sm font-medium ${
+                  on
+                    ? "border-black bg-black text-white dark:border-white dark:bg-white dark:text-black"
+                    : "border-zinc-300 text-zinc-700 dark:border-zinc-700 dark:text-zinc-200"
+                }`}
+              >
+                {d.name}
+              </button>
+            );
+          })}
         </div>
         <button
           type="button"
-          onClick={() => onApply(picked)}
+          onClick={() => onApply({ areaId, dongId })}
           className="h-12 w-full rounded-xl bg-black text-base font-semibold text-white dark:bg-white dark:text-black"
         >
-          {regionsLabel(picked, 3)} 적용
+          {pickedLabel}에서 시작
         </button>
       </div>
     </div>
@@ -2283,8 +2313,6 @@ function DesignatedPlaceSheet({
     lat: currentLocation.lat,
     lng: currentLocation.lng,
   };
-  const currentOutside =
-    currentPlace !== null && !isWithinRegions(currentPlace, regions);
   const locationHint =
     locationStatus === "loading" || locationStatus === "idle"
       ? "현재 위치를 확인하는 중이에요."
@@ -2338,12 +2366,6 @@ function DesignatedPlaceSheet({
               {locationHint}
             </p>
           )}
-          {currentOutside && (
-            <p className="text-xs text-amber-600 dark:text-amber-400">
-              종로 일대 밖 · 코스에는 들어가지만 주변 추천은 종로 일대에서만
-              돼요
-            </p>
-          )}
           {initial && !hasQuery && (
             <p className="text-xs text-zinc-500 dark:text-zinc-400">
               지금 지정된 장소: {initial.name}
@@ -2371,12 +2393,6 @@ function DesignatedPlaceSheet({
                     {pendingPlace.address}
                   </span>
                 )}
-                {!isWithinRegions(pendingPlace, regions) && (
-                  <span className="text-xs text-amber-600 dark:text-amber-400">
-                    {regionsLabel(regions)} 밖 · 코스에는 들어가지만 주변 추천은
-                    고른 지역에서만 돼요
-                  </span>
-                )}
               </span>
             </button>
           </div>
@@ -2390,7 +2406,6 @@ function DesignatedPlaceSheet({
           ) : (
             <ul className="flex flex-col gap-2">
               {results.map((p) => {
-                const outside = !isWithinRegions(p, regions);
                 return (
                   <li key={p.id}>
                     <button
@@ -2409,12 +2424,6 @@ function DesignatedPlaceSheet({
                       <span className="text-xs text-zinc-500 dark:text-zinc-400">
                         {p.address}
                       </span>
-                      {outside && (
-                        <span className="text-xs text-amber-600 dark:text-amber-400">
-                          {regionsLabel(regions)} 밖 · 코스에는 들어가지만 주변
-                          추천은 고른 지역에서만 돼요
-                        </span>
-                      )}
                     </button>
                   </li>
                 );
@@ -2450,8 +2459,8 @@ function DesignatedPlaceSheet({
         )}
 
         <p className="mt-auto text-xs text-zinc-400 dark:text-zinc-500">
-          {regionsLabel(regions)} 주변을 먼저 보여드려요. 지역 밖 장소도 이름을
-          정확히 치면 찾을 수 있어요.
+          {regionLabel(regions[0])} 주변을 먼저 보여드려요. 다른 지역 장소도
+          이름을 정확히 치면 찾을 수 있어요.
         </p>
       </div>
 
