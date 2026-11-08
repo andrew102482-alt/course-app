@@ -75,7 +75,6 @@ const EARTH_RADIUS_METERS = 6371000;
 const METERS_PER_MINUTE_WALKING = 67;
 const DETOUR_FACTOR = 1.3;
 const REVIEW_BONUS_WEIGHT = 0.5;
-const REVIEW_BONUS_REFERENCE_COUNT = 2000;
 const PROXIMITY_BONUS_WEIGHT = 0.5;
 /** 평점 정보가 없는 장소(실제 장소 검색 결과)를 점수에 넣을 때 쓰는 중간값. */
 const UNRATED_PLACE_RATING = 4;
@@ -118,10 +117,13 @@ export function naverMapLinkFor(place: DesignatedPlace): string {
   return `https://map.naver.com/p/search/${encodeURIComponent(place.name)}?c=${place.lng},${place.lat},15,0,0,0,dh`;
 }
 
-function reviewBonus(reviewCount: number): number {
-  const ratio =
-    Math.log10(reviewCount + 1) / Math.log10(REVIEW_BONUS_REFERENCE_COUNT + 1);
-  return Math.min(ratio, 1) * REVIEW_BONUS_WEIGHT;
+/**
+ * 리뷰 수 보너스. 0~99개 / 100~999개 / 1000개 이상 세 구간으로 나누고,
+ * 구간이 올라갈 때마다 같은 만큼(최대 보너스의 절반씩) 더한다. 같은 구간 안에서는 똑같다.
+ */
+export function reviewBonus(reviewCount: number): number {
+  const tier = reviewCount >= 1000 ? 2 : reviewCount >= 100 ? 1 : 0;
+  return (tier / 2) * REVIEW_BONUS_WEIGHT;
 }
 
 /** 거리 보너스를 나누는 이동시간 구간 크기(분). 같은 구간 안에서는 보너스가 똑같다. */

@@ -5,6 +5,7 @@ import {
   isClosedOn,
   isWithinRegionRange,
   proximityBonus,
+  reviewBonus,
   straightLineDistanceMeters,
   walkingMinutesBetween,
   type DesignatedStage,
@@ -426,4 +427,15 @@ test("거리 보너스는 10분 단위 구간으로 차등: 0~10분은 모두 �
   assert.equal(proximityBonus(1, 5), proximityBonus(5, 5));
   // 한도를 넘어도 음수는 되지 않는다.
   assert.ok(proximityBonus(80, 30) >= 0);
+});
+
+test("리뷰 수 보너스는 0~99 / 100~999 / 1000~ 구간별로 같은 폭씩 오르고 구간 안에서는 동일하다", () => {
+  assert.equal(reviewBonus(0), 0);
+  assert.equal(reviewBonus(0), reviewBonus(99));
+  assert.equal(reviewBonus(100), reviewBonus(999));
+  assert.equal(reviewBonus(1000), reviewBonus(50000));
+  const step1 = reviewBonus(100) - reviewBonus(99);
+  const step2 = reviewBonus(1000) - reviewBonus(999);
+  assert.ok(step1 > 0);
+  assert.ok(Math.abs(step1 - step2) < 1e-9);
 });
