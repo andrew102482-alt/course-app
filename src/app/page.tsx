@@ -2087,20 +2087,22 @@ function AddStageSheet({
 
         {canAddMore && (
           <div className="flex flex-col gap-3">
-            <button
-              type="button"
-              onClick={onStartDesignated}
-              className="flex h-14 w-full items-center justify-center rounded-xl border border-zinc-300 text-base font-medium text-black dark:border-zinc-700 dark:text-white"
-            >
-              장소 직접 지정
-            </button>
-            <button
-              type="button"
-              onClick={onAddUnsetDesignated}
-              className="flex h-14 w-full items-center justify-center rounded-xl border border-zinc-300 text-base font-medium text-black dark:border-zinc-700 dark:text-white"
-            >
-              상관없음
-            </button>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={onStartDesignated}
+                className="flex h-14 w-full items-center justify-center rounded-xl border border-zinc-300 text-base font-medium text-black dark:border-zinc-700 dark:text-white"
+              >
+                장소 직접 지정
+              </button>
+              <button
+                type="button"
+                onClick={onAddUnsetDesignated}
+                className="flex h-14 w-full items-center justify-center rounded-xl border border-zinc-300 text-base font-medium text-black dark:border-zinc-700 dark:text-white"
+              >
+                상관없음
+              </button>
+            </div>
             <div className="flex flex-col gap-2 border-t border-zinc-200 pt-3 dark:border-zinc-700">
               <label
                 htmlFor="stage-type-note"
