@@ -46,6 +46,12 @@ import { computeProgress, formatMeters, turnIcon } from "@/lib/guidance";
 import { buildAiRequest, type AiPicks } from "@/lib/aiRecommend";
 import { saveCourse, toSavedCourse } from "@/lib/savedCourses";
 import {
+  getBlurb,
+  blurbVersion,
+  requestBlurbs,
+  subscribeBlurbs,
+} from "@/lib/blurb";
+import {
   AREAS,
   DEFAULT_REGION,
   DEFAULT_SELECTION,
@@ -2873,6 +2879,11 @@ function ReorderableResultItem({
   );
 }
 
+/** 블로그 검색용 동네 이름: 주소("성동구 성수동1가")의 마지막 단어. */
+function blurbAreaOf(region: string): string {
+  return region.trim().split(/\s+/).pop() ?? "";
+}
+
 function ResultView({
   result,
   avatarPoint,
@@ -2908,6 +2919,27 @@ function ResultView({
         : "failed"
       : "idle";
   const { loadingPlaces } = useRegionContext();
+  // 실제 장소(TMAP)의 한 줄 소개: 코스는 먼저 보여주고 소개는 도착하는 대로 기존 설명 줄에 채운다.
+  useSyncExternalStore(subscribeBlurbs, blurbVersion, blurbVersion);
+  const livePicks = result.stages
+    .map((s) => s.selected)
+    .filter((p): p is Place => !!p && "source" in p && p.source === "tmap");
+  const livePicksKey = livePicks.map((p) => p.id).join(",");
+  useEffect(() => {
+    const byArea = new Map<string, { n: string; c: string }[]>();
+    for (const p of livePicks) {
+      const area = blurbAreaOf(p.region);
+      byArea.set(area, [
+        ...(byArea.get(area) ?? []),
+        {
+          n: p.name,
+          c: p.subCategory ? `${p.category} › ${p.subCategory}` : p.category,
+        },
+      ]);
+    }
+    byArea.forEach((list, area) => void requestBlurbs(area, list));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [livePicksKey]);
   const bodyRef = useRef<HTMLDivElement>(null);
   const split = useResizableSplit(DEFAULT_LIST_RATIO, bodyRef);
   const openStageIndex = result.stages.findIndex(
@@ -2991,7 +3023,10 @@ function ResultView({
               </div>
               <span className="text-sm text-zinc-600 dark:text-zinc-400">
                 {stageResult.selected.source === "tmap"
-                  ? stageResult.selected.description
+                  ? getBlurb(
+                      stageResult.selected.name,
+                      blurbAreaOf(stageResult.selected.region),
+                    ) || stageResult.selected.description
                   : `★ ${stageResult.selected.rating.toFixed(1)} · 리뷰 ${stageResult.selected.reviewCount.toLocaleString()}개`}
               </span>
             </div>
