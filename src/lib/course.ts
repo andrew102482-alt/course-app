@@ -124,13 +124,24 @@ function reviewBonus(reviewCount: number): number {
   return Math.min(ratio, 1) * REVIEW_BONUS_WEIGHT;
 }
 
-function proximityBonus(
+/** 거리 보너스를 나누는 이동시간 구간 크기(분). 같은 구간 안에서는 보너스가 똑같다. */
+export const PROXIMITY_BAND_MINUTES = 10;
+
+/**
+ * 이동시간이 가까울수록 주는 보너스. 10분 단위 구간으로 나눠 구간마다 한 단계씩 줄인다
+ * (0~10분은 모두 같은 최대 보너스, 10~20분은 한 단계 아래 …). 구간 수는 최대 이동시간에 맞춘다.
+ */
+export function proximityBonus(
   travelMinutes: number | null,
   maxTravelMinutes: number,
 ): number {
   if (travelMinutes === null) return 0;
-  const closeness = 1 - travelMinutes / maxTravelMinutes;
-  return Math.max(closeness, 0) * PROXIMITY_BONUS_WEIGHT;
+  const bands = Math.max(
+    1,
+    Math.ceil(maxTravelMinutes / PROXIMITY_BAND_MINUTES),
+  );
+  const band = Math.max(1, Math.ceil(travelMinutes / PROXIMITY_BAND_MINUTES));
+  return Math.max(1 - (band - 1) / bands, 0) * PROXIMITY_BONUS_WEIGHT;
 }
 
 /** "YYYY-MM-DD" 날짜의 요일(0=일 … 6=토). 형식이 틀리면 null. */

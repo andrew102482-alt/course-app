@@ -4,6 +4,7 @@ import {
   buildCourse,
   isClosedOn,
   isWithinRegionRange,
+  proximityBonus,
   straightLineDistanceMeters,
   walkingMinutesBetween,
   type DesignatedStage,
@@ -368,7 +369,7 @@ test("buildCourse: 평점 정보가 없는 실제 장소(rating 0)도 중간 점
     source: "tmap",
   });
   const near = live("tmap-1", 35.0);
-  const far = live("tmap-2", 35.004);
+  const far = live("tmap-2", 35.006); // 약 13분(10분 구간 밖)
   const result = buildCourse(
     [
       {
@@ -412,4 +413,17 @@ test("a stage with search keywords only uses places fetched with those keywords"
   const first = result.stages[0];
   assert.equal(first.kind, "recommend");
   assert.equal(first.selected?.id, "tagged");
+});
+
+test("거리 보너스는 10분 단위 구간으로 차등: 0~10분은 모두 같고 구간이 멀어질수록 줄어든다", () => {
+  assert.equal(proximityBonus(null, 30), 0);
+  assert.equal(proximityBonus(0, 30), proximityBonus(10, 30));
+  assert.equal(proximityBonus(3, 30), proximityBonus(9.9, 30));
+  assert.ok(proximityBonus(10.1, 30) < proximityBonus(10, 30));
+  assert.ok(proximityBonus(20.1, 30) < proximityBonus(19, 30));
+  assert.equal(proximityBonus(19, 30), proximityBonus(11, 30));
+  // 한도가 5분이면 구간이 하나라서 모두 같다.
+  assert.equal(proximityBonus(1, 5), proximityBonus(5, 5));
+  // 한도를 넘어도 음수는 되지 않는다.
+  assert.ok(proximityBonus(80, 30) >= 0);
 });
