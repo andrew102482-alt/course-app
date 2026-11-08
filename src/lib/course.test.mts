@@ -389,3 +389,27 @@ test("buildCourse: 평점 정보가 없는 실제 장소(rating 0)도 중간 점
     assert.equal(stage.candidates.length, 2);
   }
 });
+
+test("a stage with search keywords only uses places fetched with those keywords", () => {
+  const stage: RecommendStage = {
+    id: "s1",
+    kind: "recommend",
+    category: "카페",
+    keywords: ["북카페"],
+  };
+  const generic = place({ id: "generic", category: "카페" });
+  const tagged = place({
+    id: "tagged",
+    category: "카페",
+    keywordKey: "북카페",
+  });
+  const other = place({
+    id: "other",
+    category: "카페",
+    keywordKey: "루프탑카페",
+  });
+  const result = buildCourse([stage], [generic, other, tagged], 15);
+  const first = result.stages[0];
+  assert.equal(first.kind, "recommend");
+  assert.equal(first.selected?.id, "tagged");
+});

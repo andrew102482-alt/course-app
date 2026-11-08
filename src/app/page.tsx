@@ -631,6 +631,7 @@ function CourseBuilderBody({
     category: PlaceCategory,
     subCategory: string | undefined,
     note?: string,
+    keywords?: string[],
   ) {
     setStages((prev) => [
       ...prev,
@@ -640,6 +641,7 @@ function CourseBuilderBody({
         category,
         subCategory,
         note,
+        keywords,
       },
     ]);
     setAddSheetOpen(false);
@@ -648,10 +650,10 @@ function CourseBuilderBody({
   /** 사용자가 적은 장소 유형을 AI가 카테고리로 바꿔 준다. 못 알아내거나 AI가 실패하면 null. */
   async function resolveTypedStage(
     typeNote: string,
-  ): Promise<{ category: PlaceCategory; subCategory?: string } | null> {
+  ): Promise<TypedStage | null> {
     try {
       const data = await postRecommend<{
-        stage?: { category: PlaceCategory; subCategory?: string } | null;
+        stage?: TypedStage | null;
       }>({ mode: "stageType", typeNote, regionNames, allCategories });
       return data.stage ?? null;
     } catch {
@@ -1143,7 +1145,7 @@ function CourseBuilderBody({
           canAddMore
           onClose={() => setChangeStageTarget(null)}
           onResolveTyped={resolveTypedStage}
-          onAddRecommend={(category, subCategory, note) => {
+          onAddRecommend={(category, subCategory, note, keywords) => {
             setStages((prev) =>
               prev.map((s) =>
                 s.id === changeStageTarget
@@ -1153,6 +1155,7 @@ function CourseBuilderBody({
                       category,
                       subCategory,
                       note,
+                      keywords,
                       isOrigin: s.isOrigin,
                     }
                   : s,
@@ -2013,6 +2016,13 @@ function StageRow({
   );
 }
 
+/** AI가 적은 장소 유형을 해석한 결과(카테고리·세부 카테고리·지도 검색어). */
+type TypedStage = {
+  category: PlaceCategory;
+  subCategory?: string;
+  keywords?: string[];
+};
+
 function AddStageSheet({
   canAddMore,
   onClose,
@@ -2028,11 +2038,10 @@ function AddStageSheet({
     category: PlaceCategory,
     subCategory: string | undefined,
     note?: string,
+    keywords?: string[],
   ) => void;
   /** 적은 장소 유형을 AI가 카테고리로 바꿔 준다(못 알아내면 null). */
-  onResolveTyped: (
-    typeNote: string,
-  ) => Promise<{ category: PlaceCategory; subCategory?: string } | null>;
+  onResolveTyped: (typeNote: string) => Promise<TypedStage | null>;
   onStartDesignated: () => void;
   onAddUnsetDesignated: () => void;
   title?: string;
@@ -2048,8 +2057,9 @@ function AddStageSheet({
     setTypeError(false);
     const found = await onResolveTyped(note);
     setResolving(false);
-    if (found) onAddRecommend(found.category, found.subCategory, note);
-    else setTypeError(true);
+    if (found) {
+      onAddRecommend(found.category, found.subCategory, note, found.keywords);
+    } else setTypeError(true);
   }
 
   return (

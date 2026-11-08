@@ -37,6 +37,8 @@ export type Place = {
   closedDays: number[];
   /** 실제 장소 검색(TMAP)에서 가져온 장소면 "tmap". 평점·영업시간 정보가 없다(rating 0, openTime ""). */
   source?: "tmap";
+  /** 사용자가 적은 장소 유형의 검색어로 가져온 장소면 그 검색어 묶음(keywordKeyOf). 같은 검색어의 단계에만 쓴다. */
+  keywordKey?: string;
   /** 실제 장소 검색에서 가져온 경우 주소(동 단위). */
   address?: string;
 };

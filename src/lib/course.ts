@@ -7,6 +7,8 @@ export type RecommendStage = {
   subCategory?: string;
   /** 사용자가 직접 적은 "가고 싶은 장소 유형"(AI가 카테고리를 정할 때 쓴 글). 장소 고를 때 AI에게도 알려 준다. */
   note?: string;
+  /** note를 AI가 바꾼 장소 검색어(1~3개). 있으면 이 검색어로 가져온 장소만 후보가 된다. */
+  keywords?: string[];
   /** 일정 맨 앞의 출발지 칸이면 true(지우거나 순서를 옮길 수 없다). */
   isOrigin?: boolean;
 };
@@ -145,8 +147,16 @@ export function isClosedOn(place: Place, date: string | undefined): boolean {
   return weekday !== null && place.closedDays.includes(weekday);
 }
 
+/** 검색어 묶음을 장소·단계가 같은 값으로 비교할 수 있게 문자열로 만든다. */
+export function keywordKeyOf(keywords: string[]): string {
+  return keywords.join(",");
+}
+
 function matchesStage(place: Place, stage: RecommendStage): boolean {
   if (place.category !== stage.category) return false;
+  if (stage.keywords && stage.keywords.length > 0) {
+    return place.keywordKey === keywordKeyOf(stage.keywords);
+  }
   if (!stage.subCategory) return true;
   return place.subCategory === stage.subCategory;
 }

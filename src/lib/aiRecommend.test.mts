@@ -148,8 +148,31 @@ test("parseFill: 칸 수만큼 오면 그대로, 모자라면 실패(빈 결과)
 test("parseStageType picks one valid stage and ignores unknown categories", () => {
   assert.deepEqual(
     parseStageType('{"stages":[{"category":"카페","subCategory":""}]}', true),
-    { category: "카페", subCategory: undefined },
+    { category: "카페", subCategory: undefined, keywords: [] },
   );
+  const withKeywords = JSON.stringify({
+    stages: [
+      {
+        category: "카페",
+        subCategory: "",
+        keywords: [
+          " 북카페 ",
+          "북카페",
+          "a,b",
+          "x".repeat(30),
+          5,
+          "책방카페",
+          "셋",
+          "넷",
+        ],
+      },
+    ],
+  });
+  assert.deepEqual(parseStageType(withKeywords, true)?.keywords, [
+    "북카페",
+    "ab",
+    "책방카페",
+  ]);
   assert.equal(parseStageType('{"stages":[]}', true), null);
   assert.equal(
     parseStageType('{"stages":[{"category":"우주","subCategory":""}]}', true),

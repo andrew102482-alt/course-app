@@ -80,6 +80,37 @@ const PLAN_SCHEMA = {
   },
 } as const;
 
+const STAGE_TYPE_SCHEMA = {
+  type: "json_schema",
+  json_schema: {
+    name: "stage_type",
+    strict: true,
+    schema: {
+      type: "object",
+      properties: {
+        stages: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              category: {
+                type: "string",
+                enum: Object.keys(availableCatalog(true)),
+              },
+              subCategory: { type: "string" },
+              keywords: { type: "array", items: { type: "string" } },
+            },
+            required: ["category", "subCategory", "keywords"],
+            additionalProperties: false,
+          },
+        },
+      },
+      required: ["stages"],
+      additionalProperties: false,
+    },
+  },
+} as const;
+
 function validRegionNames(v: unknown): boolean {
   return (
     v === undefined ||
@@ -225,7 +256,7 @@ export async function POST(request: Request) {
       const text = await askModel(
         apiKey,
         buildStageTypePrompt(body),
-        PLAN_SCHEMA,
+        STAGE_TYPE_SCHEMA,
       );
       if (text === null) {
         return NextResponse.json({ error: "upstream" }, { status: 502 });

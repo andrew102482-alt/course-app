@@ -47,6 +47,12 @@ export async function GET(request: Request) {
   const radius = Math.min(Math.max(Number(p.get("r")) || 2500, 500), 8000);
   const category = p.get("category") ?? "";
   const sub = p.get("sub") ?? undefined;
+  // 사용자가 적은 장소 유형에서 AI가 뽑은 검색어(쉼표로 구분, 최대 3개, 각 20자 이내).
+  const custom = (p.get("kw") ?? "")
+    .split(",")
+    .map((k) => k.trim())
+    .filter((k) => k.length > 0 && k.length <= 20)
+    .slice(0, 3);
   const key = process.env.TMAP_APP_KEY;
   if (
     !key ||
@@ -63,11 +69,19 @@ export async function GET(request: Request) {
   }
 
   try {
-    const lists = await Promise.all(
-      keywordsFor(category, sub).map((k) =>
-        searchOne(key, k, lat, lng, Math.ceil(radius / 1000)).catch(() => []),
-      ),
+    const searchAll = (keywords: string[]) =>
+      Promise.all(
+        keywords.map((k) =>
+          searchOne(key, k, lat, lng, Math.ceil(radius / 1000)).catch(() => []),
+        ),
+      );
+    let lists = await searchAll(
+      custom.length > 0 ? custom : keywordsFor(category, sub),
     );
+    // 적은 검색어로 아무것도 못 찾으면 카테고리 검색어로 한 번 더 찾는다.
+    if (custom.length > 0 && lists.every((l) => l.length === 0)) {
+      lists = await searchAll(keywordsFor(category, sub));
+    }
     const seen = new Set<string>();
     const results = lists
       .flat()

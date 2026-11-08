@@ -1,5 +1,10 @@
 import type { Place, PlaceCategory } from "../data/places.ts";
-import { buildCourse, type Stage, type StageOverrides } from "./course.ts";
+import {
+  buildCourse,
+  keywordKeyOf,
+  type Stage,
+  type StageOverrides,
+} from "./course.ts";
 import type { Region } from "./regions.ts";
 
 /**
@@ -45,12 +50,13 @@ type ApiPlace = {
   lng: number;
 };
 
-function keyOf(a: Point, category: string, sub?: string) {
-  return `${Math.round(a.lat / GRID)},${Math.round(a.lng / GRID)}|${category}|${sub ?? ""}`;
+function keyOf(a: Point, category: string, sub?: string, kw?: string[]) {
+  return `${Math.round(a.lat / GRID)},${Math.round(a.lng / GRID)}|${category}|${sub ?? ""}|${kw ? keywordKeyOf(kw) : ""}`;
 }
 
-function toPlace(p: ApiPlace): Place {
+function toPlace(p: ApiPlace, keywordKey?: string): Place {
   return {
+    ...(keywordKey ? { keywordKey } : {}),
     id: p.id,
     name: p.name,
     region: p.region,
@@ -69,8 +75,8 @@ function toPlace(p: ApiPlace): Place {
   };
 }
 
-function fetchOne(a: Anchor, category: string, sub?: string) {
-  const key = keyOf(a, category, sub);
+function fetchOne(a: Anchor, category: string, sub?: string, kw?: string[]) {
+  const key = keyOf(a, category, sub, kw);
   if (cache.has(key)) return Promise.resolve();
   const running = inflight.get(key);
   if (running) return running;
@@ -81,10 +87,16 @@ function fetchOne(a: Anchor, category: string, sub?: string) {
     category,
   });
   if (sub) params.set("sub", sub);
+  if (kw && kw.length > 0) params.set("kw", kw.join(","));
   const job = fetch(`/api/places/nearby?${params}`)
     .then((r) => (r.ok ? r.json() : { results: [] }))
     .then((d: { results?: ApiPlace[] }) => {
-      cache.set(key, (d.results ?? []).map(toPlace));
+      cache.set(
+        key,
+        (d.results ?? []).map((r) =>
+          toPlace(r, kw && kw.length > 0 ? keywordKeyOf(kw) : undefined),
+        ),
+      );
     })
     .catch(() => {
       cache.set(key, []);
@@ -104,7 +116,7 @@ export function getLivePlaces(): Place[] {
   const seen = new Set<string>();
   for (const list of cache.values()) {
     for (const p of list) {
-      const k = `${p.id}|${p.category}|${p.subCategory ?? ""}`;
+      const k = `${p.id}|${p.category}|${p.subCategory ?? ""}|${p.keywordKey ?? ""}`;
       if (seen.has(k)) continue;
       seen.add(k);
       out.push(p);
@@ -161,9 +173,10 @@ export async function loadLivePlacesForCourse(opts: {
               radius: Math.max(s.radius, walkRadius),
             }));
         for (const a of anchors) {
-          const k = keyOf(a, r.stage.category, r.stage.subCategory);
+          const { category, subCategory, keywords } = r.stage;
+          const k = keyOf(a, category, subCategory, keywords);
           if (!cache.has(k))
-            jobs.push(fetchOne(a, r.stage.category, r.stage.subCategory));
+            jobs.push(fetchOne(a, category, subCategory, keywords));
         }
       }
       if (r.selected) previous = r.selected;
