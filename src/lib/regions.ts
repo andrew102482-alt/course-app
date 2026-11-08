@@ -24,7 +24,15 @@ export type Area = {
   radius: number;
 };
 
-export type RegionSelection = { areaId: string; dongId: string | null };
+/** 목록에 없는 동네·구(주소 검색으로 찾은 곳). 좌표와 이름을 그대로 들고 있다. */
+export type CustomPlace = { name: string; lat: number; lng: number };
+
+export type RegionSelection = {
+  areaId: string;
+  dongId: string | null;
+  /** 주소 검색으로 고른 구·동. 있으면 dongId는 null이다. */
+  custom?: CustomPlace;
+};
 
 export const AREAS: Area[] = [
   { id: "seoul", name: "서울", lat: 37.5665, lng: 126.978, radius: 3000 },
@@ -201,11 +209,83 @@ export function dongsOf(areaId: string): Region[] {
 }
 
 /** 저장돼 있던 값(새 형식, 또는 예전의 지역 id 목록)을 올바른 선택으로 바꾼다. 알 수 없으면 서울·종로. */
+function asCustomPlace(raw: unknown): CustomPlace | null {
+  const c = raw as Partial<CustomPlace> | null;
+  if (
+    !c ||
+    typeof c.name !== "string" ||
+    c.name.length === 0 ||
+    c.name.length > 40 ||
+    typeof c.lat !== "number" ||
+    typeof c.lng !== "number" ||
+    !(c.lat >= 33 && c.lat <= 39 && c.lng >= 124 && c.lng <= 132)
+  ) {
+    return null;
+  }
+  return { name: c.name, lat: c.lat, lng: c.lng };
+}
+
+/**
+ * 주소("서울특별시 성북구 안암동")를 시·도 id와 "성북구 안암동" 같은 이름으로 나눈다.
+ * 시·도만 있거나 시·도를 알 수 없으면 null. 도로명·번지 같은 뒷부분은 버린다.
+ */
+export function parseRegionAddress(
+  address: string,
+): { areaId: string; name: string } | null {
+  const [sido, ...rest] = address.trim().split(/\s+/);
+  if (!sido) return null;
+  const areaId = [
+    ["서울", "seoul"],
+    ["부산", "busan"],
+    ["대구", "daegu"],
+    ["인천", "incheon"],
+    ["광주", "gwangju"],
+    ["대전", "daejeon"],
+    ["울산", "ulsan"],
+    ["경기", "gyeonggi"],
+    ["강원", "gangwon"],
+    ["세종", "chungcheong"],
+    ["충청", "chungcheong"],
+    ["충북", "chungcheong"],
+    ["충남", "chungcheong"],
+    ["전라", "jeolla"],
+    ["전북", "jeolla"],
+    ["전남", "jeolla"],
+    ["경상", "gyeongsang"],
+    ["경북", "gyeongsang"],
+    ["경남", "gyeongsang"],
+    ["제주", "jeju"],
+  ].find(([prefix]) => sido.startsWith(prefix))?.[1];
+  if (!areaId) return null;
+  const parts: string[] = [];
+  for (const token of rest) {
+    if (!/[시군구읍면동리가]$/.test(token)) break;
+    parts.push(token);
+  }
+  return parts.length > 0 ? { areaId, name: parts.join(" ") } : null;
+}
+
 export function resolveSelection(raw: unknown): RegionSelection {
   const first =
     Array.isArray(raw) && typeof raw[0] === "string"
       ? { dongId: raw[0] }
-      : (raw as { areaId?: unknown; dongId?: unknown } | null);
+      : (raw as {
+          areaId?: unknown;
+          dongId?: unknown;
+          custom?: unknown;
+        } | null);
+  const custom = asCustomPlace(
+    first && "custom" in first ? first.custom : null,
+  );
+  if (
+    custom &&
+    first &&
+    "areaId" in first &&
+    typeof first.areaId === "string" &&
+    AREA_BY_ID.has(first.areaId)
+  ) {
+    return { areaId: first.areaId, dongId: null, custom };
+  }
   const dong =
     typeof first?.dongId === "string"
       ? DONG_BY_ID.get(first.dongId)
@@ -221,6 +301,23 @@ export function resolveSelection(raw: unknown): RegionSelection {
 
 /** 선택을 출발 기준 지역(동을 골랐으면 그 동, 아니면 시·도 대표 중심) 목록으로 바꾼다. */
 export function selectionRegions(selection: RegionSelection): Region[] {
+  if (selection.custom && AREA_BY_ID.has(selection.areaId)) {
+    const { name, lat, lng } = selection.custom;
+    const area = AREA_BY_ID.get(selection.areaId)!;
+    const last = name.split(" ").pop() ?? "";
+    return [
+      {
+        id: `custom-${lat.toFixed(4)},${lng.toFixed(4)}`,
+        name,
+        area: area.name,
+        areaId: area.id,
+        lat,
+        lng,
+        // 동·읍·면·리는 좁게, 구·시·군은 넓게 찾는다.
+        radius: /[동읍면리가]$/.test(last) ? 1500 : 3000,
+      },
+    ];
+  }
   const dong = selection.dongId ? DONG_BY_ID.get(selection.dongId) : undefined;
   if (dong && dong.areaId === selection.areaId) return [dong];
   const area = AREA_BY_ID.get(selection.areaId) ?? AREAS[0];

@@ -2167,6 +2167,51 @@ function RegionSheet({
   const dongs = q
     ? DONGS.filter((d) => d.name.includes(q) || d.area.includes(q))
     : [];
+  // 목록에 없는 전국의 구·동은 주소 검색(서버)으로 찾는다. 어떤 검색어의 결과인지 함께 들고 있는다.
+  const [remote, setRemote] = useState<{
+    q: string;
+    items: { areaId: string; name: string; lat: number; lng: number }[];
+  } | null>(null);
+  useEffect(() => {
+    if (q.length < 2) return;
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      fetch(`/api/regions/search?q=${encodeURIComponent(q)}`, {
+        signal: controller.signal,
+      })
+        .then((r) => (r.ok ? r.json() : { results: [] }))
+        .then((d: { results?: NonNullable<typeof remote>["items"] }) =>
+          setRemote({ q, items: d.results ?? [] }),
+        )
+        .catch(() => {
+          if (!controller.signal.aborted) setRemote({ q, items: [] });
+        });
+    }, 300);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [q]);
+  const searching = q.length >= 2 && remote?.q !== q;
+  const results: { key: string; label: string; selection: RegionSelection }[] =
+    q
+      ? [
+          ...dongs.map((d) => ({
+            key: d.id,
+            label: `${d.area} · ${d.name}`,
+            selection: { areaId: d.areaId, dongId: d.id },
+          })),
+          ...(remote?.q === q ? remote.items : []).map((r) => ({
+            key: `${r.areaId}|${r.name}`,
+            label: `${AREAS.find((a) => a.id === r.areaId)?.name ?? ""} · ${r.name}`,
+            selection: {
+              areaId: r.areaId,
+              dongId: null,
+              custom: { name: r.name, lat: r.lat, lng: r.lng },
+            },
+          })),
+        ]
+      : [];
   const pickedLabel = regionLabel(selectionRegions({ areaId, dongId })[0]);
 
   return (
@@ -2199,8 +2244,8 @@ function RegionSheet({
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={(e) => {
             // 엔터를 누르면 첫 번째 검색 결과로 바로 적용한다.
-            if (e.key === "Enter" && q && dongs.length > 0) {
-              onApply({ areaId: dongs[0].areaId, dongId: dongs[0].id });
+            if (e.key === "Enter" && q && results.length > 0) {
+              onApply(results[0].selection);
             }
           }}
           placeholder="동네 이름 검색 (전국, 예: 해운대)"
@@ -2250,36 +2295,27 @@ function RegionSheet({
           )}
         </div>
         <div className="flex min-h-0 flex-1 flex-wrap content-start gap-1.5 overflow-y-auto">
-          {q && dongs.length === 0 && (
+          {q && searching && results.length === 0 && (
+            <p className="text-sm text-zinc-500 dark:text-zinc-400">찾는 중…</p>
+          )}
+          {q && !searching && results.length === 0 && (
             <p className="text-sm text-zinc-500 dark:text-zinc-400">
-              맞는 동네가 없어요.
+              맞는 동네가 없어요. 구·동 이름을 더 정확히 써 보세요.
             </p>
           )}
-          {dongs.map((d) => {
-            const on = d.id === dongId;
-            return (
-              <button
-                key={d.id}
-                type="button"
-                onClick={() => {
+          {q
+            ? results.map((r) => (
+                <button
+                  key={r.key}
+                  type="button"
                   // 검색 결과를 누르면 시·도까지 함께 정해서 바로 출발 지역으로 적용한다.
-                  if (q) {
-                    onApply({ areaId: d.areaId, dongId: d.id });
-                    return;
-                  }
-                  setDongId(on ? null : d.id);
-                }}
-                aria-pressed={on}
-                className={`h-10 rounded-full border px-4 text-sm font-medium ${
-                  on
-                    ? "border-black bg-black text-white dark:border-white dark:bg-white dark:text-black"
-                    : "border-zinc-300 text-zinc-700 dark:border-zinc-700 dark:text-zinc-200"
-                }`}
-              >
-                {q ? `${d.area} · ${d.name}` : d.name}
-              </button>
-            );
-          })}
+                  onClick={() => onApply(r.selection)}
+                  className="h-10 rounded-full border border-zinc-300 px-4 text-sm font-medium text-zinc-700 dark:border-zinc-700 dark:text-zinc-200"
+                >
+                  {r.label}
+                </button>
+              ))
+            : null}
         </div>
         <button
           type="button"
