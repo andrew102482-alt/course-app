@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   buildCourse,
+  DETOUR_FACTOR,
   isClosedOn,
+  METERS_PER_MINUTE_WALKING,
   isWithinRegionRange,
   proximityBonus,
   reviewBonus,
@@ -63,11 +65,12 @@ test("같은 지점의 거리와 이동시간은 0이다", () => {
   assert.equal(walkingMinutesBetween(a, a), 0);
 });
 
-test("약 110m 떨어진 두 지점의 도보 시간은 1.3배 가산된 값과 같다", () => {
+test("약 110m 떨어진 두 지점의 도보 시간은 우회 계수를 곱해 걷는 속도로 나눈 값과 같다", () => {
   const a = { lat: 37.5742, lng: 126.9845 };
   const b = { lat: 37.5752, lng: 126.9845 }; // 위도 0.001 차이 ≈ 111m
   const distance = straightLineDistanceMeters(a, b);
-  const expectedMinutes = (distance * 1.3) / 67;
+  const expectedMinutes =
+    (distance * DETOUR_FACTOR) / METERS_PER_MINUTE_WALKING;
 
   assert.ok(Math.abs(distance - 111) < 5);
   assert.equal(walkingMinutesBetween(a, b), expectedMinutes);

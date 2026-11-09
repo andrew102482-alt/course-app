@@ -1,7 +1,9 @@
 import type { Place, PlaceCategory } from "../data/places.ts";
 import {
   buildCourse,
+  DETOUR_FACTOR,
   keywordKeyOf,
+  METERS_PER_MINUTE_WALKING,
   type Stage,
   type StageOverrides,
 } from "./course.ts";
@@ -16,8 +18,6 @@ const SAMPLE_REGION_ID = "jongno";
 const cache = new Map<string, Place[]>();
 const inflight = new Map<string, Promise<void>>();
 const GRID = 0.005; // 약 550m. 비슷한 기준 지점은 같은 검색 결과를 같이 쓴다.
-const METERS_PER_MINUTE = 67;
-const DETOUR = 1.3;
 
 let version = 0;
 const listeners = new Set<() => void>();
@@ -149,7 +149,8 @@ export async function loadLivePlacesForCourse(opts: {
     3500,
     Math.max(
       1000,
-      ((maxTravelMinutes * METERS_PER_MINUTE) / DETOUR) * 1.15 + 600,
+      ((maxTravelMinutes * METERS_PER_MINUTE_WALKING) / DETOUR_FACTOR) * 1.15 +
+        600,
     ),
   );
 

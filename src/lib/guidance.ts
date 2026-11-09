@@ -1,4 +1,7 @@
-import { straightLineDistanceMeters } from "./course.ts";
+import {
+  METERS_PER_MINUTE_WALKING,
+  straightLineDistanceMeters,
+} from "./course.ts";
 
 type LatLng = { lat: number; lng: number };
 export type GuideStep = LatLng & { text: string; turn: number };
@@ -58,7 +61,7 @@ export function computeProgress(
   const remainingMinutes =
     totalMinutes !== null && total > 0
       ? totalMinutes * Math.min(1, remainingMeters / total)
-      : remainingMeters / 67;
+      : remainingMeters / METERS_PER_MINUTE_WALKING;
 
   // 각 안내 지점이 경로선의 몇 번째 점인지 찾아, 내 앞쪽에 있는 첫 안내를 고른다.
   // (맨 앞 "출발" 안내와 마지막 "도착" 안내는 제외하고, 도착 가까우면 도착으로 본다.)

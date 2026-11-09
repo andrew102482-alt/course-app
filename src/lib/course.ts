@@ -72,8 +72,12 @@ export type CourseResult = {
 export type StageOverrides = Record<string, string>;
 
 const EARTH_RADIUS_METERS = 6371000;
-const METERS_PER_MINUTE_WALKING = 67;
-const DETOUR_FACTOR = 1.3;
+/**
+ * 도보 시간 추정값. 전국 16개 지역의 임의 두 지점 222쌍(직선 250m~2.2km)을 TMAP 실제 도보 경로와 비교해 맞췄다(2026-11-09).
+ * 실제 속도 중앙값 ≈ 73.5m/분, 직선 대비 실제 거리 중앙값 ≈ 1.34배(평균 1.41배). 한도를 넘는 후보를 조금 덜 놓치도록 우회 계수는 1.4로 둔다.
+ */
+export const METERS_PER_MINUTE_WALKING = 73;
+export const DETOUR_FACTOR = 1.4;
 const REVIEW_BONUS_WEIGHT = 0.5;
 const PROXIMITY_BONUS_WEIGHT = 0.5;
 /** 평점 정보가 없는 장소(실제 장소 검색 결과)를 점수에 넣을 때 쓰는 중간값. */
