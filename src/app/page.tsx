@@ -434,12 +434,8 @@ function CourseBuilderBody({
   onChangeSelection: (selection: RegionSelection) => void;
 }) {
   const [stages, setStages] = useState<Stage[]>([]);
-  // 내 출발지: 코스에는 안 넣는 이동 기준점. null이면 "상관없음"(코스 시작 지역 기준).
+  // 내 출발지: 알아 두기만 하는 칸. 코스 추천에는 전혀 쓰지 않는다. null이면 "모름".
   const [myStart, setMyStart] = useState<DesignatedPlace | null>(null);
-  const myStartPoint = useMemo(
-    () => (myStart ? { lat: myStart.lat, lng: myStart.lng } : null),
-    [myStart],
-  );
   const [regionSheetOpen, setRegionSheetOpen] = useState(false);
   // 코스가 코스 시작 지역 밖으로도 이어지므로 모든 카테고리를 후보로 본다.
   const allCategories = true;
@@ -611,9 +607,8 @@ function CourseBuilderBody({
         travelLimit,
         overrides,
         planDate,
-        myStartPoint,
       ),
-    [stages, pool, travelLimit, overrides, planDate, myStartPoint],
+    [stages, pool, travelLimit, overrides, planDate],
   );
 
   // 일정·코스 시작 지역·이동시간이 바뀔 때마다 필요한 장소 후보(직전 장소 주변)를 미리 가져온다.
@@ -626,7 +621,6 @@ function CourseBuilderBody({
       overrides,
       planDate,
       samples: includesSampleRegion(regions) ? places : [],
-      startPoint: myStartPoint,
     });
   }, [
     regionsLoaded,
@@ -636,7 +630,6 @@ function CourseBuilderBody({
     travelLimit,
     overrides,
     planDate,
-    myStartPoint,
   ]);
 
   function addRecommendStage(
@@ -686,9 +679,8 @@ function CourseBuilderBody({
 
   function upsertDesignatedStage(place: DesignatedPlace) {
     if (designatedEditTarget === MY_START_TARGET) {
-      // 내 출발지는 코스 단계가 아니라 이동 기준점이라 단계 목록은 건드리지 않는다.
+      // 내 출발지는 코스 단계가 아니고 추천에도 안 쓰므로, 단계·추천 결과는 건드리지 않는다.
       setMyStart(place);
-      setOverrides({});
       setDesignatedEditTarget(null);
       return;
     }
@@ -864,7 +856,6 @@ function CourseBuilderBody({
           overrides,
           planDate,
           samples: includesSampleRegion(regions) ? places : [],
-          startPoint: myStartPoint,
         });
         const baseline = buildCourse(
           filled.filter((s) => !isUnsetStage(s)),
@@ -872,7 +863,6 @@ function CourseBuilderBody({
           travelLimit,
           overrides,
           planDate,
-          myStartPoint,
         );
         const data = await postRecommend<{ picks?: AiPicks }>(
           buildAiRequest(baseline, aiInput),
@@ -983,7 +973,6 @@ function CourseBuilderBody({
           overrides: {},
           planDate,
           samples: includesSampleRegion(regions) ? places : [],
-          startPoint: myStartPoint,
         });
         const baseline = buildCourse(
           working,
@@ -991,7 +980,6 @@ function CourseBuilderBody({
           travelLimit,
           {},
           planDate,
-          myStartPoint,
         );
         const data = await postRecommend<{ picks?: AiPicks }>(
           buildAiRequest(baseline, aiInput),
@@ -1231,7 +1219,6 @@ function CourseBuilderBody({
             designatedEditTarget === MY_START_TARGET && myStart
               ? () => {
                   setMyStart(null);
-                  setOverrides({});
                   setDesignatedEditTarget(null);
                 }
               : undefined
@@ -1488,7 +1475,7 @@ function InputView({
               내 출발지
             </span>
             <span className="min-w-0 truncate text-base font-medium text-black dark:text-white">
-              {myStart ? myStart.name : "상관없음"}
+              {myStart ? myStart.name : "모름"}
             </span>
           </div>
           <button
@@ -2414,7 +2401,7 @@ function DesignatedPlaceSheet({
   onSubmit,
 }: {
   initial: DesignatedPlace | null;
-  /** 있으면 "상관없음으로 되돌리기" 버튼을 보여 준다(내 출발지용). */
+  /** 있으면 "모름으로 되돌리기" 버튼을 보여 준다(내 출발지용). */
   onClear?: () => void;
   /** 있으면 기본 제목 대신 쓴다. */
   title?: string;
@@ -2534,7 +2521,7 @@ function DesignatedPlaceSheet({
             onClick={onClear}
             className="h-11 w-full rounded-xl border border-zinc-300 text-base font-medium text-zinc-700 dark:border-zinc-700 dark:text-zinc-200"
           >
-            상관없음으로 되돌리기
+            모름으로 되돌리기
           </button>
         )}
 

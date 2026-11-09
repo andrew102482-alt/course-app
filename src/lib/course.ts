@@ -214,8 +214,6 @@ function scoreCandidate(
  * - `overrides`로 특정 추천 단계에 사용자가 고른 장소를 강제로 선택할 수 있다.
  * - 이미 선택된(추천) 장소는 다음 추천 단계 후보에서 제외한다.
  * - `planDate`(일정 날짜)가 정기 휴무 요일인 장소는 후보에서 자동으로 제외한다.
- * - `startPoint`(내 출발지)가 있으면 첫 추천 단계에서 직전 장소 대신 기준점으로 쓴다
- *   (최대 이동시간 제한·가까움 점수에 반영). 코스에 들어가지 않고 이동시간 합계에도 넣지 않는다.
  */
 export function buildCourse(
   stages: Stage[],
@@ -223,7 +221,6 @@ export function buildCourse(
   maxTravelMinutes: number,
   overrides: StageOverrides = {},
   planDate?: string,
-  startPoint: LatLng | null = null,
 ): CourseResult {
   const usedPlaceIds = new Set<string>();
   let previous: LatLng | null = null;
@@ -272,12 +269,7 @@ export function buildCourse(
 
     const candidates = pool
       .map((place) =>
-        scoreCandidate(
-          place,
-          previous ?? startPoint,
-          nextDesignated,
-          maxTravelMinutes,
-        ),
+        scoreCandidate(place, previous, nextDesignated, maxTravelMinutes),
       )
       .sort((a, b) => b.score - a.score);
 
@@ -304,10 +296,7 @@ export function buildCourse(
       kind: "recommend",
       stage,
       selected,
-      // 내 출발지는 이동 기준점일 뿐 코스 장소가 아니라, 첫 장소에는 이동시간을 표시하지 않는다.
-      travelMinutesFromPrevious: previous
-        ? (chosen?.travelMinutesFromPrevious ?? null)
-        : null,
+      travelMinutesFromPrevious: chosen?.travelMinutesFromPrevious ?? null,
       candidates,
       blockedByDesignated,
       closedExcludedCount,

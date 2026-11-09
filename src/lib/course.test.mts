@@ -439,29 +439,3 @@ test("리뷰 수 보너스는 0~99 / 100~999 / 1000~ 구간별로 같은 폭씩 
   assert.ok(step1 > 0);
   assert.ok(Math.abs(step1 - step2) < 1e-9);
 });
-
-test("내 출발지(startPoint)는 첫 장소의 이동 기준점이다: 최대 이동시간 밖 후보는 제외하고, 이동시간 합계에는 넣지 않는다", () => {
-  const near = place({ id: "near", rating: 4.0, lat: 37.5742, lng: 126.9845 });
-  // 약 0.02도(≈2.2km) 떨어진 곳이라 15분 안에 못 간다.
-  const far = place({ id: "far", rating: 4.9, lat: 37.5942, lng: 126.9845 });
-  const start = { lat: 37.5742, lng: 126.9845 };
-
-  const withoutStart = buildCourse([recommend("a", "맛집")], [near, far], 15);
-  // 기준점이 없으면 거리 제한이 없어 평점이 높은 쪽이 뽑힌다.
-  assert.equal(withoutStart.stages[0].selected?.id, "far");
-
-  const result = buildCourse(
-    [recommend("a", "맛집")],
-    [near, far],
-    15,
-    {},
-    undefined,
-    start,
-  );
-  const first = result.stages[0];
-  assert.equal(first.kind, "recommend");
-  assert.equal(first.selected?.id, "near");
-  // 코스에 들어가는 장소가 아니므로 첫 장소의 이동시간은 비어 있고 합계도 0이다.
-  assert.equal(first.travelMinutesFromPrevious, null);
-  assert.equal(result.totalTravelMinutes, 0);
-});
