@@ -1122,10 +1122,6 @@ function CourseBuilderBody({
             onOpenRegionSheet={() => setRegionSheetOpen(true)}
             myStart={myStart}
             onChangeMyStart={() => setDesignatedEditTarget("myStart")}
-            onClearMyStart={() => {
-              setMyStart(null);
-              setOverrides({});
-            }}
           />
         </div>
       )}
@@ -1231,6 +1227,18 @@ function CourseBuilderBody({
                 ? editingPlace.place
                 : null
           }
+          onClear={
+            designatedEditTarget === MY_START_TARGET && myStart
+              ? () => {
+                  setMyStart(null);
+                  setOverrides({});
+                  setDesignatedEditTarget(null);
+                }
+              : undefined
+          }
+          title={
+            designatedEditTarget === MY_START_TARGET ? "내 출발지" : undefined
+          }
           recentPlaces={recentDesignated}
           currentLocation={location}
           locationStatus={locationStatus}
@@ -1266,13 +1274,11 @@ function InputView({
   onOpenRegionSheet,
   myStart,
   onChangeMyStart,
-  onClearMyStart,
 }: {
   regions: Region[];
   onOpenRegionSheet: () => void;
   myStart: DesignatedPlace | null;
   onChangeMyStart: () => void;
-  onClearMyStart: () => void;
   planDate: string;
   onSetPlanDate: (date: string) => void;
   startHour: number | null;
@@ -1492,16 +1498,6 @@ function InputView({
           >
             변경
           </button>
-          {myStart && (
-            <button
-              type="button"
-              aria-label="내 출발지 지우기"
-              onClick={onClearMyStart}
-              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-zinc-300 text-base text-red-500 dark:border-zinc-700"
-            >
-              ✕
-            </button>
-          )}
         </div>
 
         {origin && (
@@ -2409,6 +2405,8 @@ function RegionSheet({
 
 function DesignatedPlaceSheet({
   initial,
+  onClear,
+  title,
   recentPlaces,
   currentLocation,
   locationStatus,
@@ -2416,6 +2414,10 @@ function DesignatedPlaceSheet({
   onSubmit,
 }: {
   initial: DesignatedPlace | null;
+  /** 있으면 "상관없음으로 되돌리기" 버튼을 보여 준다(내 출발지용). */
+  onClear?: () => void;
+  /** 있으면 기본 제목 대신 쓴다. */
+  title?: string;
   recentPlaces: DesignatedPlace[];
   currentLocation: { lat: number; lng: number } | null;
   locationStatus: LocationStatus;
@@ -2514,7 +2516,7 @@ function DesignatedPlaceSheet({
       <div className="flex h-[85vh] w-full max-w-md flex-col gap-4 overflow-y-auto rounded-t-2xl bg-white p-4 dark:bg-zinc-900">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-bold text-black dark:text-white">
-            {initial ? "지정 장소 변경" : "장소 직접 지정"}
+            {title ?? (initial ? "지정 장소 변경" : "장소 직접 지정")}
           </h2>
           <button
             type="button"
@@ -2525,6 +2527,16 @@ function DesignatedPlaceSheet({
             ✕
           </button>
         </div>
+
+        {onClear && (
+          <button
+            type="button"
+            onClick={onClear}
+            className="h-11 w-full rounded-xl border border-zinc-300 text-base font-medium text-zinc-700 dark:border-zinc-700 dark:text-zinc-200"
+          >
+            상관없음으로 되돌리기
+          </button>
+        )}
 
         <div className="flex flex-col gap-2">
           <input
