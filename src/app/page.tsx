@@ -170,7 +170,7 @@ function migrateStage(stage: Stage): Stage {
   return { ...stage, category, subCategory };
 }
 
-/** "상관없음" 상태의 출발지 장소(아직 장소를 고르지 않음). 추천 계산에는 넣지 않는다. */
+/** "상관없음" 상태의 코스 시작지 장소(아직 장소를 고르지 않음). 추천 계산에는 넣지 않는다. */
 const DEFAULT_ORIGIN_PLACE_ID = "default-origin";
 
 function isUnsetStage(stage: Stage): boolean {
@@ -181,7 +181,7 @@ function isUnsetStage(stage: Stage): boolean {
 
 /**
  * AI가 테마와 장소를 채워 줄 "상관없음" 칸.
- * 출발지의 "상관없음"은 다른 단계가 하나라도 있을 때만 칸으로 센다(없으면 AI가 일정을 통으로 짠다).
+ * 코스 시작지의 "상관없음"은 다른 단계가 하나라도 있을 때만 칸으로 센다(없으면 AI가 일정을 통으로 짠다).
  */
 function isFillSlot(stage: Stage, all: Stage[]): boolean {
   if (!isUnsetStage(stage)) return false;
@@ -193,10 +193,10 @@ function describeStageForAi(stage: Stage): string {
   if (stage.kind === "recommend") {
     return stageLabel(stage.category, stage.subCategory, stage.note);
   }
-  return stage.isOrigin ? `출발지: ${stage.place.name}` : stage.place.name;
+  return stage.isOrigin ? `코스 시작지: ${stage.place.name}` : stage.place.name;
 }
 
-/** 장소를 아직 고르지 않은 "상관없음" 지정 단계(출발지 기본값, 단계 추가의 "상관없음")를 만든다. */
+/** 장소를 아직 고르지 않은 "상관없음" 지정 단계(코스 시작지 기본값, 단계 추가의 "상관없음")를 만든다. */
 function unsetPlace(): DesignatedPlace {
   return {
     id: DEFAULT_ORIGIN_PLACE_ID,
@@ -207,7 +207,7 @@ function unsetPlace(): DesignatedPlace {
   };
 }
 
-/** 일정 맨 앞에 출발지 단계가 항상 하나 있도록 맞춘다(없으면 "상관없음" 출발지를 앞에 넣고, 여러 개면 첫 번째만 남긴다). */
+/** 일정 맨 앞에 코스 시작지 단계가 항상 하나 있도록 맞춘다(없으면 "상관없음" 코스 시작지를 앞에 넣고, 여러 개면 첫 번째만 남긴다). */
 function ensureOriginStage(stages: Stage[]): Stage[] {
   const origin = stages.find((s) => s.isOrigin);
   const rest = stages.filter((s) => !s.isOrigin);
@@ -675,7 +675,7 @@ function CourseBuilderBody({
   function upsertDesignatedStage(place: DesignatedPlace) {
     setStages((prev) => {
       if (designatedEditTarget && designatedEditTarget !== "new") {
-        // 추천 단계였던 칸도 장소를 직접 고르면 지정 단계로 바뀐다(출발지 표시는 유지).
+        // 추천 단계였던 칸도 장소를 직접 고르면 지정 단계로 바뀐다(코스 시작지 표시는 유지).
         return prev.map((s) =>
           s.id === designatedEditTarget
             ? {
@@ -717,7 +717,7 @@ function CourseBuilderBody({
   }
 
   /**
-   * 결과 화면에서 입력 화면으로 돌아간다. 결과 화면에서 바꾼 것(순서·출발지·삭제·추가)과
+   * 결과 화면에서 입력 화면으로 돌아간다. 결과 화면에서 바꾼 것(순서·코스 시작지·삭제·추가)과
    * AI가 채운 칸은 모두 버리고, "코스 만들기"를 누르던 때의 입력 상태로 되돌린다.
    */
   function leaveResult() {
@@ -729,7 +729,7 @@ function CourseBuilderBody({
     setOverrides({});
   }
 
-  /** 결과 화면에서 단계를 지운다(출발지도 가능, 지우면 다음 단계가 출발지가 됨). 남은 단계가 없으면 입력 화면으로 돌아간다. */
+  /** 결과 화면에서 단계를 지운다(코스 시작지도 가능, 지우면 다음 단계가 코스 시작지가 됨). 남은 단계가 없으면 입력 화면으로 돌아간다. */
   function removeStageFromResult(id: string) {
     const remaining = stages.filter((s) => s.id !== id && !isUnsetStage(s));
     setStages((prev) =>
@@ -887,8 +887,8 @@ function CourseBuilderBody({
       regionNames,
       allCategories,
     };
-    // 출발지 말고는 단계가 하나도 없을 때만 AI가 단계 수까지 정한다("상관없음" 칸은 칸으로 센다).
-    // 출발지만 추천받기로 한 경우(originOnly)에는 뒤 일정을 짜지 않는다.
+    // 코스 시작지 말고는 단계가 하나도 없을 때만 AI가 단계 수까지 정한다("상관없음" 칸은 칸으로 센다).
+    // 코스 시작지만 추천받기로 한 경우(originOnly)에는 뒤 일정을 짜지 않는다.
     const needsPlan = !options.originOnly && !stages.some((s) => !s.isOrigin);
     const hasSlots = stages.some((s) => isFillSlot(s, stages));
     const wantsAi =
@@ -933,7 +933,7 @@ function CourseBuilderBody({
             category: p.category,
             subCategory: p.subCategory,
           }));
-        // 출발지는 그대로 두고, 이어서 AI가 짠 단계를 붙인다(비어 있던 지정 단계는 대체).
+        // 코스 시작지는 그대로 두고, 이어서 AI가 짠 단계를 붙인다(비어 있던 지정 단계는 대체).
         // 입력 화면에 단계가 비쳐 보이지 않도록, 결과 화면으로 넘어가는 순간에 함께 반영한다.
         plannedStages = newStages;
         working = [...stages.filter((s) => s.isOrigin), ...newStages].filter(
@@ -993,13 +993,13 @@ function CourseBuilderBody({
     }
   }
 
-  /** 코스 만들기 화면의 일정 단계만 처음 상태(출발지 "상관없음" 하나)로 되돌린다. 날짜·시간·분위기 글·이동시간은 그대로 둔다. */
+  /** 코스 만들기 화면의 일정 단계만 처음 상태(코스 시작지 "상관없음" 하나)로 되돌린다. 날짜·시간·분위기 글·이동시간은 그대로 둔다. */
   function resetStages() {
     setStages(ensureOriginStage([]));
     setOverrides({});
   }
 
-  /** 결과 화면에서 끌어 바꾼 순서를 일정 단계에 반영한다. 맨 위에 온 단계가 출발지가 된다. */
+  /** 결과 화면에서 끌어 바꾼 순서를 일정 단계에 반영한다. 맨 위에 온 단계가 코스 시작지가 된다. */
   function reorderStagesById(orderedIds: string[]) {
     setStages((prev) => {
       const moved = orderedIds
@@ -1272,7 +1272,7 @@ function InputView({
       ? "이 분위기로 코스 추천받기"
       : "AI에게 코스 추천받기";
 
-  // 출발지 칸만 있고 그 칸이 테마나 장소로 채워져 있으면, 출발지만 추천할지 먼저 묻는다.
+  // 코스 시작지 칸만 있고 그 칸이 테마나 장소로 채워져 있으면, 코스 시작지만 추천할지 먼저 묻는다.
   const [askOriginOnly, setAskOriginOnly] = useState(false);
   const onlyFilledOrigin =
     origin !== undefined && others.length === 0 && !isUnsetStage(origin);
@@ -1419,8 +1419,8 @@ function InputView({
             <ul className="flex list-none flex-col gap-1.5">
               <li>• 가고 싶은 장소나 테마를 직접 추가할 수 있어요.</li>
               <li>
-                • 출발지 칸만 있고 다른 단계가 없으면, 나머지 일정은 AI가 통째로
-                추천해요.
+                • 코스 시작지 칸만 있고 다른 단계가 없으면, 나머지 일정은 AI가
+                통째로 추천해요.
               </li>
               <li>• 왼쪽 ⠿ 버튼을 잡고 끌면 순서를 바꿀 수 있어요.</li>
               <li>• &lsquo;상관없음&rsquo;으로 두면 그 칸은 AI가 채워줘요.</li>
@@ -1524,7 +1524,7 @@ function InputView({
               일정 단계를 모두 지울까요?
             </h2>
             <p className="text-sm text-zinc-600 dark:text-zinc-400">
-              일정 단계가 처음 상태(출발지 &lsquo;상관없음&rsquo; 하나)로
+              일정 단계가 처음 상태(코스 시작지 &lsquo;상관없음&rsquo; 하나)로
               돌아가요. 날짜와 시간, 분위기 글은 그대로예요.
             </p>
             <div className="flex gap-2">
@@ -1559,12 +1559,12 @@ function InputView({
             role="dialog"
             onClick={(e) => e.stopPropagation()}
             aria-modal="true"
-            aria-label="출발지만 추천"
+            aria-label="코스 시작지만 추천"
             className="flex w-full max-w-sm flex-col gap-4 rounded-2xl bg-white p-5 dark:bg-zinc-900"
           >
             <div className="flex items-start justify-between gap-2">
               <h2 className="text-lg font-bold text-black dark:text-white">
-                출발지만 추천해드릴까요?
+                코스 시작지만 추천해드릴까요?
               </h2>
               <button
                 type="button"
@@ -1576,7 +1576,7 @@ function InputView({
               </button>
             </div>
             <p className="text-sm text-zinc-600 dark:text-zinc-400">
-              &lsquo;아니오&rsquo;를 누르면 출발지 뒤의 일정도 AI가 이어서
+              &lsquo;아니오&rsquo;를 누르면 코스 시작지 뒤의 일정도 AI가 이어서
               추천해요.
             </p>
             <div className="flex gap-2">
@@ -1931,7 +1931,7 @@ function StageRow({
   onRequestChangeDesignated,
 }: {
   stage: Stage;
-  /** 출발지처럼 순서를 옮기거나 지울 수 없는 단계. */
+  /** 코스 시작지처럼 순서를 옮기거나 지울 수 없는 단계. */
   fixed?: boolean;
   onRemove: (id: string) => void;
   onRequestChangeDesignated: (stageId: string) => void;
@@ -1961,7 +1961,7 @@ function StageRow({
         <div className="flex flex-1 items-center gap-2">
           {fixed && (
             <span className="w-fit shrink-0 rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
-              출발지
+              코스 시작지
             </span>
           )}
           <span className="flex flex-col text-base font-medium text-black dark:text-white">
@@ -2995,7 +2995,7 @@ function ResultView({
   avatarPoint: { lat: number; lng: number };
   onBack: () => void;
   onReplace: (stageId: string, placeId: string) => void;
-  /** 모든 단계 id를 새 순서대로 넘긴다(맨 위가 출발지가 된다). */
+  /** 모든 단계 id를 새 순서대로 넘긴다(맨 위가 코스 시작지가 된다). */
   onReorderStages: (orderedIds: string[]) => void;
   onRequestChangeTheme: (stageId: string) => void;
   onRemoveStage: (stageId: string) => void;
@@ -4061,7 +4061,7 @@ function RouteMap({
 }: {
   stages: StageResult[];
   avatarPoint?: { lat: number; lng: number } | null;
-  /** true면 내 위치에서 첫 장소(출발지)까지 가는 길 안내 동선을 점선으로 함께 그린다. */
+  /** true면 내 위치에서 첫 장소(코스 시작지)까지 가는 길 안내 동선을 점선으로 함께 그린다. */
   showApproach?: boolean;
 }) {
   const [zoomPan, zoomSvgRef] = useZoomPan();
@@ -4075,7 +4075,7 @@ function RouteMap({
       name: s.selected!.name,
     }));
 
-  // 구간마다 도로 경로선을 받아온다(실패하면 직선). 내 위치 → 출발지 구간도 포함.
+  // 구간마다 도로 경로선을 받아온다(실패하면 직선). 내 위치 → 코스 시작지 구간도 포함.
   const legPairs = points.slice(1).map((p, i) => ({ from: points[i], to: p }));
   const approachLeg =
     showApproach && avatarPoint && points[0]
@@ -4301,9 +4301,9 @@ function NavigateView({
   onBack: () => void;
   onEnd: () => void;
 }) {
-  // 체크하면 "내 위치 → 출발지" 길 안내 동선을 끈다(기본은 켜짐).
+  // 체크하면 "내 위치 → 코스 시작지" 길 안내 동선을 끈다(기본은 켜짐).
   const [approachOff, setApproachOff] = useState(false);
-  // 내 위치 → 출발지(첫 장소) 도보 길 안내. RouteMap이 같은 구간을 그리므로 같은 캐시를 쓴다.
+  // 내 위치 → 코스 시작지(첫 장소) 도보 길 안내. RouteMap이 같은 구간을 그리므로 같은 캐시를 쓴다.
   const maps = useNaverMaps();
   const origin = result.stages.find((s) => s.selected !== null)?.selected;
   const approach = useRoadPaths(
@@ -4358,18 +4358,18 @@ function NavigateView({
             onChange={(e) => setApproachOff(e.target.checked)}
             className="h-4 w-4"
           />
-          출발지까지 동선 끄기
+          코스 시작지까지 동선 끄기
         </label>
       </div>
 
       {!approachOff && origin && (
         <div
           role="status"
-          aria-label="출발지까지 길 안내"
+          aria-label="코스 시작지까지 길 안내"
           className="absolute inset-x-3 bottom-3 z-10 rounded-2xl bg-white/95 p-4 shadow-lg dark:bg-zinc-900/95"
         >
           <p className="text-xs font-medium text-zinc-500 dark:text-zinc-400">
-            출발지({origin.name})까지 길 안내
+            코스 시작지({origin.name})까지 길 안내
             {!locationKnown && " · 위치 권한이 없어 고른 지역 중심에서 안내 중"}
           </p>
           {!progress ? (
@@ -4378,7 +4378,7 @@ function NavigateView({
             </p>
           ) : progress.arrived ? (
             <p className="mt-1 text-lg font-bold text-black dark:text-white">
-              📍 출발지에 도착했어요
+              📍 코스 시작지에 도착했어요
             </p>
           ) : (
             <>

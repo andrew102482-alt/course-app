@@ -9,7 +9,7 @@ export type RecommendStage = {
   note?: string;
   /** note를 AI가 바꾼 장소 검색어(1~3개). 있으면 이 검색어로 가져온 장소만 후보가 된다. */
   keywords?: string[];
-  /** 일정 맨 앞의 출발지 칸이면 true(지우거나 순서를 옮길 수 없다). */
+  /** 일정 맨 앞의 코스 시작지 칸이면 true(지우거나 순서를 옮길 수 없다). */
   isOrigin?: boolean;
 };
 
@@ -26,7 +26,7 @@ export type DesignatedStage = {
   id: string;
   kind: "designated";
   place: DesignatedPlace;
-  /** 일정 맨 앞에 기본으로 놓이는 출발지 단계. 지우거나 순서를 옮길 수 없고, 장소만 바꿀 수 있다. */
+  /** 일정 맨 앞에 기본으로 놓이는 코스 시작지 단계. 지우거나 순서를 옮길 수 없고, 장소만 바꿀 수 있다. */
   isOrigin?: boolean;
 };
 

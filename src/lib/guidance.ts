@@ -30,7 +30,7 @@ export function pathDistance(path: LatLng[], from: number, to: number): number {
 }
 
 export type Progress = {
-  /** 도착(출발지)까지 남은 거리(m). */
+  /** 도착(코스 시작지)까지 남은 거리(m). */
   remainingMeters: number;
   /** 도착까지 남은 시간(분). 총 시간을 알면 남은 비율로, 모르면 분당 67m로 계산. */
   remainingMinutes: number;

@@ -181,7 +181,7 @@ test("이미 선택된 장소는 다음 단계 후보에서 제외된다", () =>
   assert.equal(result.stages[1].selected, null);
 });
 
-test("출발지만 지정한 경우: 지정 장소는 그대로 들어가고 다음 추천 단계는 그 장소를 기준으로 계산한다", () => {
+test("코스 시작지만 지정한 경우: 지정 장소는 그대로 들어가고 다음 추천 단계는 그 장소를 기준으로 계산한다", () => {
   const start = designated("start", { lat: 37.5742, lng: 126.9845 });
   const near = place({
     id: "near",
