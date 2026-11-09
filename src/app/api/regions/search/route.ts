@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { parseRegionAddress } from "@/lib/regions";
 
-// 출발 지역 검색: 네이버 Geocoding으로 전국의 구·동 이름을 찾는다. 키는 서버에서만 읽는다.
+// 코스 시작 지역 검색: 네이버 Geocoding으로 전국의 구·동 이름을 찾는다. 키는 서버에서만 읽는다.
 export async function GET(request: Request) {
   const q = new URL(request.url).searchParams.get("q")?.trim() ?? "";
   const id = process.env.NCP_MAPS_CLIENT_ID;

@@ -432,7 +432,7 @@ function CourseBuilderBody({
 }) {
   const [stages, setStages] = useState<Stage[]>([]);
   const [regionSheetOpen, setRegionSheetOpen] = useState(false);
-  // 코스가 출발 지역 밖으로도 이어지므로 모든 카테고리를 후보로 본다.
+  // 코스가 코스 시작 지역 밖으로도 이어지므로 모든 카테고리를 후보로 본다.
   const allCategories = true;
   const regionNames = useMemo(() => regions.map((r) => r.name), [regions]);
   const pool = useMemo(
@@ -606,7 +606,7 @@ function CourseBuilderBody({
     [stages, pool, travelLimit, overrides, planDate],
   );
 
-  // 일정·출발 지역·이동시간이 바뀔 때마다 필요한 장소 후보(직전 장소 주변)를 미리 가져온다.
+  // 일정·코스 시작 지역·이동시간이 바뀔 때마다 필요한 장소 후보(직전 장소 주변)를 미리 가져온다.
   useEffect(() => {
     if (!regionsLoaded || !hydrated) return;
     void loadLivePlacesForCourse({
@@ -1304,12 +1304,12 @@ function InputView({
       <div className="flex gap-3">
         <section className="flex min-w-0 flex-1 flex-col gap-2">
           <label className="text-sm font-medium text-zinc-600 dark:text-zinc-400">
-            출발 지역
+            코스 시작 지역
           </label>
           <button
             type="button"
             onClick={onOpenRegionSheet}
-            aria-label={`출발 지역 선택: ${regionLabel(regions[0])}`}
+            aria-label={`코스 시작 지역 선택: ${regionLabel(regions[0])}`}
             className="flex h-12 w-full items-center justify-between gap-2 rounded-xl border border-zinc-300 bg-zinc-50 px-4 text-left text-base text-black dark:border-zinc-700 dark:bg-zinc-900 dark:text-white"
           >
             <span className="min-w-0 truncate">{regionLabel(regions[0])}</span>
@@ -2149,7 +2149,7 @@ function AddStageSheet({
   );
 }
 
-/** 출발 지역 선택 창. 시·도(큰 단위) 하나를 고르고, 원하면 그 안의 동(작은 단위)도 하나 고른다. "적용"을 눌러야 바뀐다. */
+/** 코스 시작 지역 선택 창. 시·도(큰 단위) 하나를 고르고, 원하면 그 안의 동(작은 단위)도 하나 고른다. "적용"을 눌러야 바뀐다. */
 function RegionSheet({
   selected,
   onClose,
@@ -2215,12 +2215,12 @@ function RegionSheet({
     <div className="fixed inset-0 z-30 flex items-end justify-center bg-black/50">
       <div
         role="dialog"
-        aria-label="출발 지역 선택"
+        aria-label="코스 시작 지역 선택"
         className="flex h-[80vh] w-full max-w-md flex-col gap-3 rounded-t-2xl bg-white p-4 dark:bg-zinc-900"
       >
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-bold text-black dark:text-white">
-            출발 지역
+            코스 시작 지역
           </h2>
           <button
             type="button"
@@ -2317,7 +2317,7 @@ function RegionSheet({
                 <button
                   key={r.key}
                   type="button"
-                  // 검색 결과를 누르면 시·도까지 함께 정해서 바로 출발 지역으로 적용한다.
+                  // 검색 결과를 누르면 시·도까지 함께 정해서 바로 코스 시작 지역으로 적용한다.
                   onClick={() => onApply(r.selection)}
                   className="h-10 rounded-full border border-zinc-300 px-4 text-sm font-medium text-zinc-700 dark:border-zinc-700 dark:text-zinc-200"
                 >

@@ -84,7 +84,7 @@ test("parseRegionAddress: 주소에서 시·도와 구·동 이름만 뽑는다"
   assert.equal(parseRegionAddress("모르는도 어딘가동"), null);
 });
 
-test("검색으로 고른 구·동(custom)은 저장·복원되고 출발 지역이 된다", () => {
+test("검색으로 고른 구·동(custom)은 저장·복원되고 코스 시작 지역이 된다", () => {
   const sel = {
     areaId: "seoul",
     dongId: null,

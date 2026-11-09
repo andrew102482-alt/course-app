@@ -10,7 +10,7 @@ import type { Region } from "./regions.ts";
 /**
  * 예시 데이터(종로) 밖의 추천 후보. 서버 통로(/api/places/nearby, TMAP 장소 검색)에서
  * "기준 지점 주변 × 카테고리"마다 한 번 가져와 기억해 둔다. 평점·영업시간은 받을 수 없어 비어 있다.
- * 기준 지점은 첫 장소는 출발 지역, 그다음부터는 직전에 고른 장소다(그래서 코스가 출발 지역 밖으로 이어질 수 있다).
+ * 기준 지점은 첫 장소는 코스 시작 지역, 그다음부터는 직전에 고른 장소다(그래서 코스가 코스 시작 지역 밖으로 이어질 수 있다).
  */
 const SAMPLE_REGION_ID = "jongno";
 const cache = new Map<string, Place[]>();
