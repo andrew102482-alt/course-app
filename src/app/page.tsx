@@ -43,6 +43,7 @@ import {
   MAX_STAGE_TYPE_NOTE_LENGTH,
   stageLabel,
   type AiPicks,
+  constrainPicks,
 } from "@/lib/aiRecommend";
 import { saveCourse, toSavedCourse } from "@/lib/savedCourses";
 import {
@@ -867,8 +868,15 @@ function CourseBuilderBody({
         const data = await postRecommend<{ picks?: AiPicks }>(
           buildAiRequest(baseline, aiInput),
         );
-        const added = Object.fromEntries(
-          Object.entries(data.picks ?? {}).filter(([id]) => newIds.has(id)),
+        const added = constrainPicks(
+          filled.filter((s) => !isUnsetStage(s)),
+          buildPool(regions),
+          travelLimit,
+          Object.fromEntries(
+            Object.entries(data.picks ?? {}).filter(([id]) => newIds.has(id)),
+          ),
+          planDate,
+          overrides,
         );
         if (Object.keys(added).length > 0) {
           setOverrides((prev) => ({ ...prev, ...added }));
@@ -984,9 +992,18 @@ function CourseBuilderBody({
         const data = await postRecommend<{ picks?: AiPicks }>(
           buildAiRequest(baseline, aiInput),
         );
-        const picks = data.picks ?? {};
-        if (Object.keys(picks).length === 0) throw new Error("ai-empty");
-        setOverrides(picks);
+        const rawPicks = data.picks ?? {};
+        if (Object.keys(rawPicks).length === 0) throw new Error("ai-empty");
+        // 최대 이동시간을 넘는 선택은 버리고 그 단계는 기본 추천으로 둔다.
+        setOverrides(
+          constrainPicks(
+            working,
+            buildPool(regions),
+            travelLimit,
+            rawPicks,
+            planDate,
+          ),
+        );
       } catch {
         showAiMessage("AI 추천을 불러오지 못해 기본 추천으로 보여드려요.");
       }

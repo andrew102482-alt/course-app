@@ -199,3 +199,56 @@ test("stageLabel appends the wished type only when present", () => {
     "카페 (원하는 유형: 북카페)",
   );
 });
+
+test("constrainPicks: 앞 단계를 AI가 다르게 골라 다음 단계가 최대 이동시간을 넘으면 그 선택은 버린다", async () => {
+  const { constrainPicks, buildAiRequest } = await import("./aiRecommend.ts");
+  const { buildCourse } = await import("./course.ts");
+  const mk = (id: string, category: "카페" | "맛집", lat: number) => ({
+    id,
+    name: id,
+    region: "r",
+    category,
+    lat,
+    lng: 126.98,
+    rating: 4,
+    reviewCount: 10,
+    description: "",
+    openTime: "",
+    closeTime: "",
+    closedDays: [],
+  });
+  // 카페 a(기준), b(북쪽으로 약 1.7km). 맛집 near-a는 a 바로 옆, near-b는 b 옆.
+  const cafeA = mk("cafeA", "카페", 37.5);
+  const cafeB = mk("cafeB", "카페", 37.515);
+  const foodA = mk("foodA", "맛집", 37.5005);
+  const foodB = mk("foodB", "맛집", 37.5155);
+  const stages = [
+    { id: "s1", kind: "recommend" as const, category: "카페" as const },
+    { id: "s2", kind: "recommend" as const, category: "맛집" as const },
+  ];
+  const all = [cafeA, cafeB, foodA, foodB];
+  // 한도 10분(≈500m). s1에서 cafeB를 고르면 s2의 foodA는 cafeB에서 너무 멀다.
+  const picks = constrainPicks(stages, all, 10, { s1: "cafeB", s2: "foodA" });
+  // cafeB 자체는 기준 지점이 없어 허용, foodA는 cafeB에서 멀어 버려진다.
+  assert.equal(picks.s1, "cafeB");
+  assert.equal(picks.s2, undefined);
+  const ok = constrainPicks(stages, all, 10, { s1: "cafeB", s2: "foodB" });
+  assert.deepEqual(ok, { s1: "cafeB", s2: "foodB" });
+
+  // AI에게는 한도 안 후보만 보여 준다.
+  const baseline = buildCourse(stages, all, 10);
+  const req = buildAiRequest(baseline, {
+    themeNote: "",
+    startHour: null,
+    endHour: null,
+    planDate: undefined,
+    regionNames: [],
+  });
+  const s2 = req.stages.find((s) => s.id === "s2");
+  assert.ok(
+    s2 &&
+      s2.candidates.every(
+        (c) => c.travelMinutes === null || c.travelMinutes <= 10,
+      ),
+  );
+});

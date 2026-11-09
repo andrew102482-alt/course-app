@@ -1,5 +1,11 @@
 import { SUB_CATEGORIES, places, type PlaceCategory } from "../data/places.ts";
-import type { CourseResult } from "./course.ts";
+import {
+  buildCourse,
+  type CourseResult,
+  type Stage,
+  type StageOverrides,
+} from "./course.ts";
+import type { Place } from "../data/places.ts";
 
 /** AI에게 보내는 후보 장소(추천 단계마다 점수 순 상위 몇 곳). */
 export type AiCandidate = {
@@ -69,7 +75,9 @@ export function buildAiRequest(
       id: result.stage.id,
       kind: "recommend",
       label: stageLabel(category, subCategory, result.stage.note),
+      // 최대 이동시간 밖 후보는 AI에게 보여 주지 않는다(골라도 쓸 수 없으므로).
       candidates: result.candidates
+        .filter((c) => c.withinMaxTravel)
         .slice(0, AI_MAX_CANDIDATES_PER_STAGE)
         .map((c) => ({
           id: c.place.id,
@@ -180,6 +188,41 @@ export function parsePicks(text: string, req: AiRecommendRequest): AiPicks {
     used.add(placeId);
   }
   return picks;
+}
+
+/**
+ * AI가 고른 장소 중 "앞 단계 선택이 AI 선택으로 바뀐 뒤에도" 최대 이동시간 안에 드는 것만 남긴다.
+ * AI는 기본 추천(점수 1등) 기준 거리를 보고 고르므로, 앞 단계를 다르게 고르면 다음 단계가
+ * 실제로는 한도를 넘을 수 있다. 앞 단계부터 하나씩 확인해, 넘는 선택은 버린다(그 단계는 기본 추천).
+ */
+export function constrainPicks(
+  stages: Stage[],
+  places: Place[],
+  maxTravelMinutes: number,
+  picks: AiPicks,
+  planDate?: string,
+  baseOverrides: StageOverrides = {},
+): AiPicks {
+  const accepted: AiPicks = {};
+  for (const stage of stages) {
+    const placeId = picks[stage.id];
+    if (stage.kind !== "recommend" || !placeId) continue;
+    const trial = buildCourse(
+      stages,
+      places,
+      maxTravelMinutes,
+      { ...baseOverrides, ...accepted, [stage.id]: placeId },
+      planDate,
+    );
+    const result = trial.stages.find((r) => r.stage.id === stage.id);
+    if (
+      result?.kind === "recommend" &&
+      result.candidates.some((c) => c.place.id === placeId && c.withinMaxTravel)
+    ) {
+      accepted[stage.id] = placeId;
+    }
+  }
+  return accepted;
 }
 
 /** 일정 단계가 하나도 없을 때, AI에게 단계 자체를 짜 달라고 요청하는 본문. */
