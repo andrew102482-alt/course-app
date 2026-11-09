@@ -417,6 +417,9 @@ function CourseBuilder() {
   );
 }
 
+/** designatedEditTarget가 이 값이면 장소 선택 창은 "내 출발지"를 고르는 중이다. */
+const MY_START_TARGET = "myStart";
+
 function CourseBuilderBody({
   regions,
   selection,
@@ -431,6 +434,12 @@ function CourseBuilderBody({
   onChangeSelection: (selection: RegionSelection) => void;
 }) {
   const [stages, setStages] = useState<Stage[]>([]);
+  // 내 출발지: 코스에는 안 넣는 이동 기준점. null이면 "상관없음"(코스 시작 지역 기준).
+  const [myStart, setMyStart] = useState<DesignatedPlace | null>(null);
+  const myStartPoint = useMemo(
+    () => (myStart ? { lat: myStart.lat, lng: myStart.lng } : null),
+    [myStart],
+  );
   const [regionSheetOpen, setRegionSheetOpen] = useState(false);
   // 코스가 코스 시작 지역 밖으로도 이어지므로 모든 카테고리를 후보로 본다.
   const allCategories = true;
@@ -602,8 +611,9 @@ function CourseBuilderBody({
         travelLimit,
         overrides,
         planDate,
+        myStartPoint,
       ),
-    [stages, pool, travelLimit, overrides, planDate],
+    [stages, pool, travelLimit, overrides, planDate, myStartPoint],
   );
 
   // 일정·코스 시작 지역·이동시간이 바뀔 때마다 필요한 장소 후보(직전 장소 주변)를 미리 가져온다.
@@ -616,6 +626,7 @@ function CourseBuilderBody({
       overrides,
       planDate,
       samples: includesSampleRegion(regions) ? places : [],
+      startPoint: myStartPoint,
     });
   }, [
     regionsLoaded,
@@ -625,6 +636,7 @@ function CourseBuilderBody({
     travelLimit,
     overrides,
     planDate,
+    myStartPoint,
   ]);
 
   function addRecommendStage(
@@ -673,6 +685,13 @@ function CourseBuilderBody({
   }
 
   function upsertDesignatedStage(place: DesignatedPlace) {
+    if (designatedEditTarget === MY_START_TARGET) {
+      // 내 출발지는 코스 단계가 아니라 이동 기준점이라 단계 목록은 건드리지 않는다.
+      setMyStart(place);
+      setOverrides({});
+      setDesignatedEditTarget(null);
+      return;
+    }
     setStages((prev) => {
       if (designatedEditTarget && designatedEditTarget !== "new") {
         // 추천 단계였던 칸도 장소를 직접 고르면 지정 단계로 바뀐다(코스 시작지 표시는 유지).
@@ -845,6 +864,7 @@ function CourseBuilderBody({
           overrides,
           planDate,
           samples: includesSampleRegion(regions) ? places : [],
+          startPoint: myStartPoint,
         });
         const baseline = buildCourse(
           filled.filter((s) => !isUnsetStage(s)),
@@ -852,6 +872,7 @@ function CourseBuilderBody({
           travelLimit,
           overrides,
           planDate,
+          myStartPoint,
         );
         const data = await postRecommend<{ picks?: AiPicks }>(
           buildAiRequest(baseline, aiInput),
@@ -962,6 +983,7 @@ function CourseBuilderBody({
           overrides: {},
           planDate,
           samples: includesSampleRegion(regions) ? places : [],
+          startPoint: myStartPoint,
         });
         const baseline = buildCourse(
           working,
@@ -969,6 +991,7 @@ function CourseBuilderBody({
           travelLimit,
           {},
           planDate,
+          myStartPoint,
         );
         const data = await postRecommend<{ picks?: AiPicks }>(
           buildAiRequest(baseline, aiInput),
@@ -996,6 +1019,7 @@ function CourseBuilderBody({
   /** 코스 만들기 화면의 일정 단계만 처음 상태(코스 시작지 "상관없음" 하나)로 되돌린다. 날짜·시간·분위기 글·이동시간은 그대로 둔다. */
   function resetStages() {
     setStages(ensureOriginStage([]));
+    setMyStart(null);
     setOverrides({});
   }
 
@@ -1015,7 +1039,9 @@ function CourseBuilderBody({
   }
 
   const editingPlace =
-    designatedEditTarget && designatedEditTarget !== "new"
+    designatedEditTarget &&
+    designatedEditTarget !== "new" &&
+    designatedEditTarget !== MY_START_TARGET
       ? stages.find(
           (s) => s.id === designatedEditTarget && s.kind === "designated",
         )
@@ -1094,6 +1120,12 @@ function CourseBuilderBody({
             onReset={resetStages}
             regions={regions}
             onOpenRegionSheet={() => setRegionSheetOpen(true)}
+            myStart={myStart}
+            onChangeMyStart={() => setDesignatedEditTarget("myStart")}
+            onClearMyStart={() => {
+              setMyStart(null);
+              setOverrides({});
+            }}
           />
         </div>
       )}
@@ -1191,11 +1223,13 @@ function CourseBuilderBody({
       {designatedEditTarget && (
         <DesignatedPlaceSheet
           initial={
-            editingPlace &&
-            editingPlace.kind === "designated" &&
-            !isUnsetStage(editingPlace)
-              ? editingPlace.place
-              : null
+            designatedEditTarget === MY_START_TARGET
+              ? myStart
+              : editingPlace &&
+                  editingPlace.kind === "designated" &&
+                  !isUnsetStage(editingPlace)
+                ? editingPlace.place
+                : null
           }
           recentPlaces={recentDesignated}
           currentLocation={location}
@@ -1230,9 +1264,15 @@ function InputView({
   onReset,
   regions,
   onOpenRegionSheet,
+  myStart,
+  onChangeMyStart,
+  onClearMyStart,
 }: {
   regions: Region[];
   onOpenRegionSheet: () => void;
+  myStart: DesignatedPlace | null;
+  onChangeMyStart: () => void;
+  onClearMyStart: () => void;
   planDate: string;
   onSetPlanDate: (date: string) => void;
   startHour: number | null;
@@ -1433,6 +1473,35 @@ function InputView({
           >
             <span aria-hidden>↺</span>초기화
           </button>
+        </div>
+
+        <div className="flex items-center gap-2 rounded-xl border border-zinc-300 bg-white p-3 dark:border-zinc-700 dark:bg-black">
+          <span className="w-2 shrink-0" aria-hidden />
+          <div className="flex min-w-0 flex-1 items-center gap-2">
+            <span className="w-fit shrink-0 rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+              내 출발지
+            </span>
+            <span className="min-w-0 truncate text-base font-medium text-black dark:text-white">
+              {myStart ? myStart.name : "상관없음"}
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={onChangeMyStart}
+            className="h-9 shrink-0 rounded-lg border border-zinc-300 px-3 text-sm font-medium text-zinc-600 dark:border-zinc-700 dark:text-zinc-300"
+          >
+            변경
+          </button>
+          {myStart && (
+            <button
+              type="button"
+              aria-label="내 출발지 지우기"
+              onClick={onClearMyStart}
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-zinc-300 text-base text-red-500 dark:border-zinc-700"
+            >
+              ✕
+            </button>
+          )}
         </div>
 
         {origin && (

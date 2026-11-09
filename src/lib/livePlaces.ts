@@ -141,9 +141,18 @@ export async function loadLivePlacesForCourse(opts: {
   overrides: StageOverrides;
   planDate?: string;
   samples: Place[];
+  /** 내 출발지(이동 기준점). 있으면 첫 장소 후보를 코스 시작 지역 대신 이 주변에서 찾는다. */
+  startPoint?: Point | null;
 }): Promise<void> {
-  const { stages, starts, maxTravelMinutes, overrides, planDate, samples } =
-    opts;
+  const {
+    stages,
+    starts,
+    maxTravelMinutes,
+    overrides,
+    planDate,
+    samples,
+    startPoint = null,
+  } = opts;
   if (!stages.some((s) => s.kind === "recommend")) return;
   const walkRadius = Math.min(
     3500,
@@ -160,13 +169,15 @@ export async function loadLivePlacesForCourse(opts: {
       maxTravelMinutes,
       overrides,
       planDate,
+      startPoint,
     );
     const jobs: Promise<void>[] = [];
     let previous: Point | null = null;
     for (const r of result.stages) {
       if (r.kind === "recommend") {
-        const anchors: Anchor[] = previous
-          ? [{ ...previous, radius: walkRadius }]
+        const base = previous ?? startPoint;
+        const anchors: Anchor[] = base
+          ? [{ lat: base.lat, lng: base.lng, radius: walkRadius }]
           : starts.map((s) => ({
               lat: s.lat,
               lng: s.lng,
