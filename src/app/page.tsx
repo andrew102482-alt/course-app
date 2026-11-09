@@ -3121,6 +3121,28 @@ function ResultView({
     byArea.forEach((list, area) => void requestBlurbs(area, list));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [livePicksKey]);
+  // 지도 말풍선과 같은 값(TMAP 실제 도보 시간)을 카드 사이·총 이동시간에도 쓴다. 못 받았으면 직선거리 추정값.
+  const selectedStages = result.stages.filter((s) => s.selected !== null);
+  const roadLegs = useRoadPaths(
+    selectedStages.slice(1).map((s, i) => ({
+      from: selectedStages[i].selected!,
+      to: s.selected!,
+    })),
+    true,
+  );
+  const legMinutes = new Map<string, number>();
+  selectedStages.slice(1).forEach((s, i) => {
+    const road = roadLegs[i]?.minutes;
+    legMinutes.set(
+      s.stage.id,
+      road ??
+        walkingMinutesBetween(
+          selectedStages[i].selected!,
+          selectedStages[i + 1].selected!,
+        ),
+    );
+  });
+  const totalWalkMinutes = [...legMinutes.values()].reduce((a, b) => a + b, 0);
   const bodyRef = useRef<HTMLDivElement>(null);
   const split = useResizableSplit(DEFAULT_LIST_RATIO, bodyRef);
   const openStageIndex = result.stages.findIndex(
@@ -3170,7 +3192,12 @@ function ResultView({
                 : "text-zinc-400 dark:text-zinc-500"
             }`}
           >
-            도보 약 {Math.round(stageResult.travelMinutesFromPrevious)}분
+            도보 약{" "}
+            {Math.round(
+              legMinutes.get(stageResult.stage.id) ??
+                stageResult.travelMinutesFromPrevious,
+            )}
+            분
             {stageResult.kind === "designated" && stageResult.travelExceedsMax
               ? " · 설정보다 길어요"
               : ""}
@@ -3358,7 +3385,7 @@ function ResultView({
           >
             <div className="mb-3 flex items-baseline justify-between gap-2">
               <p className="text-sm font-medium text-zinc-600 dark:text-zinc-400">
-                총 이동시간 약 {Math.round(result.totalTravelMinutes)}분
+                총 이동시간 약 {Math.round(totalWalkMinutes)}분
               </p>
               <p className="text-xs text-zinc-400 dark:text-zinc-500">
                 칩(▾)을 누르면 바꿀 수 있어요
